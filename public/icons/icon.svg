@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Financial Home">
+  <rect width="512" height="512" rx="96" fill="#1d4ed8" />
+  <rect x="112" y="144" width="56" height="224" rx="16" fill="#ffffff" />
+  <rect x="112" y="144" width="176" height="56" rx="16" fill="#ffffff" />
+  <rect x="112" y="244" width="140" height="52" rx="16" fill="#ffffff" />
+  <circle cx="356" cy="316" r="88" fill="none" stroke="#93c5fd" stroke-width="40" />
+  <circle cx="356" cy="316" r="24" fill="#ffffff" />
+</svg>

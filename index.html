@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="description" content="Financial Home 102026 — organização doméstica, financeira e pessoal privada." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Financial Home</title>
+    <script>
+      // Aplica tema/fonte antes do primeiro paint para evitar flash.
+      ;(function () {
+        try {
+          var raw = localStorage.getItem('fh.preferences')
+          var theme = 'system'
+          var scale = 'md'
+          if (raw) {
+            var parsed = JSON.parse(raw)
+            var state = parsed && parsed.state
+            if (state) {
+              theme = state.theme || theme
+              scale = state.fontScale || scale
+            }
+          }
+          var resolved =
+            theme === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : theme
+          document.documentElement.dataset.theme = resolved
+          var sizes = { sm: '14px', md: '16px', lg: '18px', xl: '20px' }
+          document.documentElement.style.fontSize = sizes[scale] || sizes.md
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
