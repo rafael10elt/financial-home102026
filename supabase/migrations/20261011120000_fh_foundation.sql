@@ -1,9 +1,9 @@
-﻿-- FH-SQL-001 (espelho de banco.sql) — manter sincronizado com o livro banco.sql
+-- FH-SQL-001 (espelho de banco.sql) - manter sincronizado com o livro banco.sql
 -- Fonte autoritativa: banco.sql, secao FH-SQL-001
 
 begin;
 
--- gen_random_bytes() vem do pgcrypto (necessÃ¡rio para o join_code).
+-- gen_random_bytes() vem do pgcrypto (necessario para o join_code).
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------------
@@ -47,9 +47,9 @@ create table if not exists public.user_settings_fh (
 );
 
 -- ---------------------------------------------------------------------
--- 2. Funï¿½ï¿½es auxiliares
+-- 2. Funcoes auxiliares
 -- ---------------------------------------------------------------------
-create or replace public.set_updated_at_fh()
+create or replace function public.set_updated_at_fh()
 returns trigger
 language plpgsql
 as $$
@@ -59,9 +59,9 @@ begin
 end;
 $$;
 
--- Recupera a casa do usuï¿½rio autenticado.
--- SECURITY DEFINER: lï¿½ profiles_fh sem depender de RLS (evita recursï¿½o).
-create or replace public.current_household_id_fh()
+-- Recupera a casa do usuario autenticado.
+-- SECURITY DEFINER: le profiles_fh sem depender de RLS (evita recursao).
+create or replace function public.current_household_id_fh()
 returns uuid
 language sql
 stable
@@ -74,10 +74,10 @@ as $$
   limit 1;
 $$;
 
--- Verifica se o usuï¿½rio autenticado pertence ï¿½ casa informada.
--- SECURITY DEFINER: necessï¿½ria porque as policies referenciam esta tabela
--- (sem isso o Postgres acusa recursï¿½o de RLS).
-create or replace public.is_household_member_fh(p_household_id uuid)
+-- Verifica se o usuario autenticado pertence a casa informada.
+-- SECURITY DEFINER: necessaria porque as policies referenciam esta tabela
+-- (sem isso o Postgres acusa recursao de RLS).
+create or replace function public.is_household_member_fh(p_household_id uuid)
 returns boolean
 language sql
 stable
@@ -93,9 +93,9 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------
--- 3. Perfil automï¿½tico no cadastro (trigger em auth.users)
+-- 3. Perfil automatico no cadastro (trigger em auth.users)
 -- ---------------------------------------------------------------------
-create or replace public.handle_new_user_fh()
+create or replace function public.handle_new_user_fh()
 returns trigger
 language plpgsql
 security definer
@@ -121,10 +121,10 @@ create trigger t_auth_users_fh
   for each row execute function public.handle_new_user_fh();
 
 -- ---------------------------------------------------------------------
--- 4. Funï¿½ï¿½es de criaï¿½ï¿½o e entrada de casa (SECURITY DEFINER)
+-- 4. Funcoes de criacao e entrada de casa (SECURITY DEFINER)
 -- ---------------------------------------------------------------------
--- Garante um perfil mesmo que o trigger jï¿½ tenha rodado antes desta migraï¿½ï¿½o.
-create or replace public.create_household_fh(p_name text)
+-- Garante um perfil mesmo que o trigger ja tenha rodado antes desta migracao.
+create or replace function public.create_household_fh(p_name text)
 returns uuid
 language plpgsql
 security definer
@@ -172,7 +172,7 @@ begin
 end;
 $$;
 
-create or replace public.join_household_by_code_fh(p_code text)
+create or replace function public.join_household_by_code_fh(p_code text)
 returns uuid
 language plpgsql
 security definer
@@ -239,7 +239,7 @@ alter table public.household_members_fh enable row level security;
 alter table public.profiles_fh enable row level security;
 alter table public.user_settings_fh enable row level security;
 
--- households_fh: membros leem; criaï¿½ï¿½o/exclusï¿½o sï¿½ via funï¿½ï¿½o; update apenas owner.
+-- households_fh: membros leem; criacao/exclusao so via funcao; update apenas owner.
 drop policy if exists households_fh_select on public.households_fh;
 create policy households_fh_select on public.households_fh
   for select
@@ -258,18 +258,18 @@ create policy households_fh_delete on public.households_fh
   for delete
   to authenticated
   using (created_by = auth.uid() and public.is_household_member_fh(id));
--- Sem policy de INSERT: sï¿½ create_household_fh (SECURITY DEFINER) insere.
+-- Sem policy de INSERT: so create_household_fh (SECURITY DEFINER) insere.
 
--- household_members_fh: leitura para membros da mesma casa; escrita apenas via funï¿½ï¿½o.
+-- household_members_fh: leitura para membros da mesma casa; escrita apenas via funcao.
 drop policy if exists household_members_fh_select on public.household_members_fh;
 create policy household_members_fh_select on public.household_members_fh
   for select
   to authenticated
   using (user_id = auth.uid() or public.is_household_member_fh(household_id));
--- Sem policies de INSERT/UPDATE/DELETE: escrita exclusiva das funï¿½ï¿½es.
+-- Sem policies de INSERT/UPDATE/DELETE: escrita exclusiva das funcoes.
 
--- profiles_fh: o prï¿½prio usuï¿½rio e os membros da mesma casa leem;
--- o prï¿½prio usuï¿½rio edita somente o prï¿½prio perfil.
+-- profiles_fh: o proprio usuario e os membros da mesma casa leem;
+-- o proprio usuario edita somente o proprio perfil.
 drop policy if exists profiles_fh_select on public.profiles_fh;
 create policy profiles_fh_select on public.profiles_fh
   for select
@@ -301,7 +301,7 @@ create policy user_settings_fh_all on public.user_settings_fh
   with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------
--- 7. Permissï¿½es de execuï¿½ï¿½o das funï¿½ï¿½es
+-- 7. Permissoes de execucao das funcoes
 -- ---------------------------------------------------------------------
 revoke all on function public.create_household_fh(text) from public, anon;
 revoke all on function public.join_household_by_code_fh(text) from public, anon;
@@ -310,4 +310,4 @@ grant execute on function public.join_household_by_code_fh(text) to authenticate
 grant execute on function public.current_household_id_fh() to authenticated;
 grant execute on function public.is_household_member_fh(uuid) to authenticated;
 
-commit;
+commit

@@ -45,7 +45,7 @@
 -- ---------------------------------------------------------------------
 --
 -- FH-SQL-000 | Fase 0 | 2026-10-11 | Cabeçalho e convenções (sem DDL)   [preparado]
--- FH-SQL-001 | Fase 1 | 2026-10-11 | Casa, membros, perfis, preferências e RLS  [preparado]
+-- FH-SQL-001 | Fase 1 | 2026-10-11 | Casa, membros, perfis, preferências e RLS  [executado-pelo-usuario em 2026-10-14; validacao 3 confirmada: 8 policies]
 -- =====================================================================
 
 
@@ -69,34 +69,34 @@
 SELECT 'FH-SQL-000: livro banco.sql aberto. Nenhum objeto criado.' AS fh_check;
 
 -- =====================================================================
--- FH-SQL-001 � Casa, membros, perfis, prefer�ncias e RLS
--- Tipo: migra��o nova
+-- FH-SQL-001 - Casa, membros, perfis, preferencias e RLS
+-- Tipo: migracao nova
 -- Data: 2026-10-11
--- Fase: 1 � Funda��o
--- Objetivo: criar o n�cleo de identidade dom�stica (casa, membros, perfis,
---           prefer�ncias por usu�rio) com Row Level Security, fun��es de
---           cria��o/entrada de casa e trigger de perfil no cadastro.
--- Depend�ncias: projeto Supabase ativo; tabela `auth.users` (gerenciada).
--- Pr�-requisito: nenhum objeto `*_fh` existente (bloco in�dito).
+-- Fase: 1 - Fundacao
+-- Objetivo: criar o nucleo de identidade domestica (casa, membros, perfis,
+--           preferencias por usuario) com Row Level Security, funcoes de
+--           criacao/entrada de casa e trigger de perfil no cadastro.
+-- Dependencias: projeto Supabase ativo; tabela `auth.users` (gerenciada).
+-- Pre-requisito: nenhum objeto `*_fh` existente (bloco inedito).
 --
 -- Objetos criados:
 --   Tabelas: households_fh, household_members_fh, profiles_fh, user_settings_fh
---   Fun��es: set_updated_at_fh(), current_household_id_fh(),
+--   Funcoes: set_updated_at_fh(), current_household_id_fh(),
 --            is_household_member_fh(uuid), handle_new_user_fh(),
 --            create_household_fh(text), join_household_by_code_fh(text)
---   Trigger: t_auth_users_fh (ap�s inser��o em auth.users)
+--   Trigger: t_auth_users_fh (apos insercao em auth.users)
 --   Policies RLS nas 4 tabelas
 --
 -- Efeito esperado:
---   * Cadastro de usu�rio gera automaticamente um perfil.
---   * Usu�rio autenticado pode criar uma casa (vira owner) ou entrar com c�digo.
+--   * Cadastro de usuario gera automaticamente um perfil.
+--   * Usuario autenticado pode criar uma casa (vira owner) ou entrar com codigo.
 --   * Membros da mesma casa veem os registros um do outro.
---   * Prefer�ncias pessoais ficam protegidas: s� o pr�prio usu�rio l�/grava.
---   * Escritas diretas em household_members_fh s�o bloqueadas: apenas as
---     fun��es SECURITY DEFINER inserem membros.
+--   * Preferencias pessoais ficam protegidas: so o proprio usuario le/grava.
+--   * Escritas diretas em household_members_fh sao bloqueadas: apenas as
+--     funcoes SECURITY DEFINER inserem membros.
 --
 -- Riscos e rollback:
---   * Baixo risco. N�o h� dados a migrar (banco novo).
+--   * Baixo risco. Nao ha dados a migrar (banco novo).
 --   * Rollback (somente se nada mais tiver sido criado depois):
 --
 --     DROP TRIGGER IF EXISTS t_auth_users_fh ON auth.users;
@@ -111,13 +111,25 @@ SELECT 'FH-SQL-000: livro banco.sql aberto. Nenhum objeto criado.' AS fh_check;
 --     DROP TABLE IF EXISTS public.household_members_fh;
 --     DROP TABLE IF EXISTS public.households_fh;
 --
--- Instru��o: executar o bloco inteiro uma �nica vez no Supabase SQL Editor.
--- Estado: [preparado] � aguardando autoriza��o/execu��o do usu�rio.
+-- Revisao 2026-10-14 (antes da primeira execucao bem-sucedida):
+--   * Causa raiz do erro 42601 `syntax error at or near "public"`:
+--     faltava a palavra-chave FUNCTION em todas as criacoes de funcao
+--     (`create or replace public.x()` -> `create or replace function public.x()`).
+--   * Comentarios normalizados para ASCII puro para eliminar qualquer
+--     risco de codificacao ao colar no editor web (havia caracteres
+--     corrompidos U+FFFD na primeira versao do bloco).
+--   * O bloco nunca foi aplicado (a transacao abortou no erro de sintaxe
+--     e nada recebeu COMMIT), por isso a correcao e feita no proprio
+--     FH-SQL-001 em vez de um bloco de compensacao. A reexecucao integral
+--     e idempotente (IF NOT EXISTS / OR REPLACE / DROP ... IF EXISTS).
+--
+-- Instrucao: executar o bloco inteiro uma unica vez no Supabase SQL Editor.
+-- Estado: [executado-pelo-usuario em 2026-10-14] - validacao 3 confirmada (8 policies).
 -- =====================================================================
 
 begin;
 
--- gen_random_bytes() vem do pgcrypto (necessário para o join_code).
+-- gen_random_bytes() vem do pgcrypto (necessario para o join_code).
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------------
@@ -161,9 +173,9 @@ create table if not exists public.user_settings_fh (
 );
 
 -- ---------------------------------------------------------------------
--- 2. Fun��es auxiliares
+-- 2. Funcoes auxiliares
 -- ---------------------------------------------------------------------
-create or replace public.set_updated_at_fh()
+create or replace function public.set_updated_at_fh()
 returns trigger
 language plpgsql
 as $$
@@ -173,9 +185,9 @@ begin
 end;
 $$;
 
--- Recupera a casa do usu�rio autenticado.
--- SECURITY DEFINER: l� profiles_fh sem depender de RLS (evita recurs�o).
-create or replace public.current_household_id_fh()
+-- Recupera a casa do usuario autenticado.
+-- SECURITY DEFINER: le profiles_fh sem depender de RLS (evita recursao).
+create or replace function public.current_household_id_fh()
 returns uuid
 language sql
 stable
@@ -188,10 +200,10 @@ as $$
   limit 1;
 $$;
 
--- Verifica se o usu�rio autenticado pertence � casa informada.
--- SECURITY DEFINER: necess�ria porque as policies referenciam esta tabela
--- (sem isso o Postgres acusa recurs�o de RLS).
-create or replace public.is_household_member_fh(p_household_id uuid)
+-- Verifica se o usuario autenticado pertence a casa informada.
+-- SECURITY DEFINER: necessaria porque as policies referenciam esta tabela
+-- (sem isso o Postgres acusa recursao de RLS).
+create or replace function public.is_household_member_fh(p_household_id uuid)
 returns boolean
 language sql
 stable
@@ -207,9 +219,9 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------
--- 3. Perfil autom�tico no cadastro (trigger em auth.users)
+-- 3. Perfil automatico no cadastro (trigger em auth.users)
 -- ---------------------------------------------------------------------
-create or replace public.handle_new_user_fh()
+create or replace function public.handle_new_user_fh()
 returns trigger
 language plpgsql
 security definer
@@ -235,10 +247,10 @@ create trigger t_auth_users_fh
   for each row execute function public.handle_new_user_fh();
 
 -- ---------------------------------------------------------------------
--- 4. Fun��es de cria��o e entrada de casa (SECURITY DEFINER)
+-- 4. Funcoes de criacao e entrada de casa (SECURITY DEFINER)
 -- ---------------------------------------------------------------------
--- Garante um perfil mesmo que o trigger j� tenha rodado antes desta migra��o.
-create or replace public.create_household_fh(p_name text)
+-- Garante um perfil mesmo que o trigger ja tenha rodado antes desta migracao.
+create or replace function public.create_household_fh(p_name text)
 returns uuid
 language plpgsql
 security definer
@@ -286,7 +298,7 @@ begin
 end;
 $$;
 
-create or replace public.join_household_by_code_fh(p_code text)
+create or replace function public.join_household_by_code_fh(p_code text)
 returns uuid
 language plpgsql
 security definer
@@ -353,7 +365,7 @@ alter table public.household_members_fh enable row level security;
 alter table public.profiles_fh enable row level security;
 alter table public.user_settings_fh enable row level security;
 
--- households_fh: membros leem; cria��o/exclus�o s� via fun��o; update apenas owner.
+-- households_fh: membros leem; criacao/exclusao so via funcao; update apenas owner.
 drop policy if exists households_fh_select on public.households_fh;
 create policy households_fh_select on public.households_fh
   for select
@@ -372,18 +384,18 @@ create policy households_fh_delete on public.households_fh
   for delete
   to authenticated
   using (created_by = auth.uid() and public.is_household_member_fh(id));
--- Sem policy de INSERT: s� create_household_fh (SECURITY DEFINER) insere.
+-- Sem policy de INSERT: so create_household_fh (SECURITY DEFINER) insere.
 
--- household_members_fh: leitura para membros da mesma casa; escrita apenas via fun��o.
+-- household_members_fh: leitura para membros da mesma casa; escrita apenas via funcao.
 drop policy if exists household_members_fh_select on public.household_members_fh;
 create policy household_members_fh_select on public.household_members_fh
   for select
   to authenticated
   using (user_id = auth.uid() or public.is_household_member_fh(household_id));
--- Sem policies de INSERT/UPDATE/DELETE: escrita exclusiva das fun��es.
+-- Sem policies de INSERT/UPDATE/DELETE: escrita exclusiva das funcoes.
 
--- profiles_fh: o pr�prio usu�rio e os membros da mesma casa leem;
--- o pr�prio usu�rio edita somente o pr�prio perfil.
+-- profiles_fh: o proprio usuario e os membros da mesma casa leem;
+-- o proprio usuario edita somente o proprio perfil.
 drop policy if exists profiles_fh_select on public.profiles_fh;
 create policy profiles_fh_select on public.profiles_fh
   for select
@@ -415,7 +427,7 @@ create policy user_settings_fh_all on public.user_settings_fh
   with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------
--- 7. Permiss�es de execu��o das fun��es
+-- 7. Permissoes de execucao das funcoes
 -- ---------------------------------------------------------------------
 revoke all on function public.create_household_fh(text) from public, anon;
 revoke all on function public.join_household_by_code_fh(text) from public, anon;
@@ -427,7 +439,7 @@ grant execute on function public.is_household_member_fh(uuid) to authenticated;
 commit;
 
 -- ---------------------------------------------------------------------
--- Consultas de valida��o (rodar ap�s a execu��o do bloco acima)
+-- Consultas de validacao (rodar apos a execucao do bloco acima)
 -- ---------------------------------------------------------------------
 -- 1) Objetos existem:
 select table_name from information_schema.tables
@@ -447,9 +459,9 @@ select tablename, policyname from pg_policies
  where schemaname = 'public' order by tablename, policyname;
 -- Esperado: 8 policies (3 households, 1 members, 3 profiles, 1 settings)
 
--- 4) Teste manual com dois usu�rios (fase de valida��o do usu�rio):
---    a) usu�rio A executa: select public.create_household_fh('Casa Teste');
+-- 4) Teste manual com dois usuarios (fase de validacao do usuario):
+--    a) usuario A executa: select public.create_household_fh('Casa Teste');
 --    b) copia o join_code: select join_code from public.households_fh;
---    c) usu�rio B executa: select public.join_household_by_code_fh('<codigo>');
+--    c) usuario B executa: select public.join_household_by_code_fh('<codigo>');
 --    d) B consulta: select * from public.households_fh;  -> deve ver 1 linha
---    e) usu�rio C (sem c�digo) consulta o mesmo select -> deve ver 0 linhas
+--    e) usuario C (sem codigo) consulta o mesmo select -> deve ver 0 linhas

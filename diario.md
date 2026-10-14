@@ -238,3 +238,110 @@ Correções feitas durante a rodada: imports relativos em `src/ui` e `src/app`; 
 
 1. **Usuário:** criar projeto Supabase → executar `FH-SQL-001` → criar `.env` → `npm run dev` → validar login + criar casa + entrar com código em um segundo navegador/perfil.
 2. **Agente (após confirmação):** Fase 2 — Overview com relógios (já com base testada), clima de Dublin, eventos/tarefas/lembretes e notificações internas.
+
+---
+
+## Rodada 003 — Correção do FH-SQL-001 (erro 42601 no Supabase)
+
+**Data:** 2026-10-14
+**Fase:** 1 — Fundação (correção de migração, sem código de app alterado)
+**Objetivo:** corrigir o erro de sintaxe reportado pelo usuário ao executar o FH-SQL-001 no Supabase SQL Editor.
+
+### Estado inicial relevante
+
+- Usuário colou o bloco FH-SQL-001 no Supabase SQL Editor e recebeu:
+  `ERROR: 42601: syntax error at or near "public"` — `LINE 166: create or replace public.set_updated_at_fh()`.
+
+### Diagnóstico (causa raiz confirmada)
+
+1. **Erro real:** faltava a palavra-chave `FUNCTION` nas 6 criações de função
+   (`create or replace public.x()` em vez de `create or replace function public.x()`).
+   O parser do Postgres para exatamente em `public`, como mostra o erro. Falha minha na redação do bloco.
+2. **Problema secundário:** o bloco continha 96 caracteres corrompidos U+FFFD nos comentários
+   (visíveis no print como `Fun��es`), gerados na minha cadeia de escrita do arquivo.
+   Eram apenas comentários (não causam erro de sintaxe), mas foram eliminados por higiene
+   e para não gerar dúvida na revisão.
+
+### Decisão
+
+Correção feita **no próprio FH-SQL-001** (não em bloco de compensação), com justificativa explícita:
+o bloco **nunca foi aplicado** — o erro abortou a transação (`begin;` sem `commit` alcançado),
+logo nada foi criado no banco e não há histórico aplicado a preservar.
+A reexecução integral é idempotente e segura
+(`IF NOT EXISTS` / `OR REPLACE` / `DROP ... IF EXISTS` em todos os objetos).
+
+### Arquivos alterados
+
+- `banco.sql` — bloco FH-SQL-001 reescrito: `FUNCTION` adicionado nas 6 funções,
+  comentários normalizados para ASCII puro, nota de revisão registrada no cabeçalho do bloco.
+  Estado: [preparado] — ainda não executado com sucesso no Supabase.
+- `supabase/migrations/20261011120000_fh_foundation.sql` — espelho regenerado a partir do
+  `banco.sql` (ASCII puro, sem U+FFFD, 6 pares de `$$` balanceados — verificado).
+- Nenhum arquivo de código da aplicação foi alterado.
+
+### Testes executados e resultados reais
+
+- Verificação por script: 0 ocorrências de U+FFFD em `banco.sql`; 6/6 criações de função
+  com a palavra-chave `FUNCTION`; espelho sem caracteres não-ASCII — **ok**.
+- Revisão manual das demais construções do bloco (defaults com `auth.uid()`, FK para
+  `auth.users`, trigger em `auth.users`, policies com `to authenticated`, `revoke`/`grant`,
+  `EXECUTE FUNCTION` nos triggers): nenhuma outra sintaxe inválida identificada.
+- **Não foi possível executar o SQL aqui** (sem acesso ao projeto Supabase do usuário).
+  A validação real depende da execução pelo usuário + consultas de validação do bloco.
+
+### Pendências
+
+1. **Usuário:** colar o bloco FH-SQL-001 corrigido no Supabase SQL Editor e executar
+   (pode simplesmente reexecutar o bloco inteiro; é idempotente).
+   Depois rodar as 4 consultas de validação que estão no final do bloco.
+2. Se `create extension pgcrypto` falhar por permissão (improvável no Supabase, onde a
+   extensão já vem instalada), me avise com a mensagem exata.
+
+### Próximas ações recomendadas
+
+Após execução bem-sucedida: marcar FH-SQL-001 como [executado-pelo-usuário], criar `.env`,
+validar login + casa com 2 perfis, e então autorizar a Fase 2.
+
+---
+
+## Rodada 004 — FH-SQL-001 executado pelo usuário (validação 3 confirmada)
+
+**Data:** 2026-10-14
+**Fase:** 1 — Fundação (validação de banco, sem código alterado)
+**Objetivo:** confirmar o resultado da execução do bloco corrigido no Supabase.
+
+### Evidência recebida
+
+Print do SQL Editor mostrando a consulta de validação nº 3
+(`select tablename, policyname from pg_policies ...`) com **8 rows**:
+
+| tablename | policyname |
+|---|---|
+| household_members_fh | household_members_fh_select |
+| households_fh | households_fh_delete |
+| households_fh | households_fh_select |
+| households_fh | households_fh_update |
+| profiles_fh | profiles_fh_insert |
+| profiles_fh | profiles_fh_select |
+| profiles_fh | profiles_fh_update |
+| user_settings_fh | user_settings_fh_all |
+
+**Resultado: exatamente o esperado** (8 policies: 3 households, 1 members, 3 profiles, 1 settings).
+Isso prova que o bloco executou até o `commit` sem erro — tabelas, funções, triggers e RLS criados.
+
+### Arquivos alterados
+
+- `banco.sql` — índice e linha de estado do FH-SQL-001 atualizados para
+  `[executado-pelo-usuario em 2026-10-14]` (apenas anotação de estado; conteúdo SQL intacto).
+
+### Pendências
+
+1. Validações nº 1, 2 e 4 do bloco ainda não confirmadas (tabelas, flag RLS e teste manual
+   com 2 usuários + 1 usuário sem código).
+2. `.env` ainda não criado; login na app ainda não testado.
+
+### Próximas ações recomendadas
+
+1. **Usuário:** rodar as validações nº 1, 2 e 4 → criar `.env` → `npm run dev` →
+   testar login + criar casa + entrar com código em 2 perfis.
+2. **Agente (após confirmação):** Fase 2.
