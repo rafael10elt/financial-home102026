@@ -1,4 +1,5 @@
-﻿import { Navigate, Route, Routes } from 'react-router-dom'
+import { Suspense, lazy } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
 import { useI18n } from '../i18n'
@@ -9,6 +10,39 @@ import { OverviewPage } from '../features/overview/OverviewPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { PhasePlaceholder } from '../ui/PhasePlaceholder'
 import { Card, CardDescription, CardTitle } from '../ui/Card'
+
+// Code-splitting por rota: cada módulo pesado vira um chunk separado.
+// Overview/Settings/Login ficam no chunk inicial (primeira tela).
+const AgendaPage = lazy(() =>
+  import('../features/agenda/AgendaPage').then((module) => ({ default: module.AgendaPage })),
+)
+const AssistantPage = lazy(() =>
+  import('../features/assistant/AssistantPage').then((module) => ({ default: module.AssistantPage })),
+)
+const DiaryPage = lazy(() =>
+  import('../features/diary/DiaryPage').then((module) => ({ default: module.DiaryPage })),
+)
+const FinancePage = lazy(() =>
+  import('../features/finance/FinancePage').then((module) => ({ default: module.FinancePage })),
+)
+const NotificationsPage = lazy(() =>
+  import('../features/notifications/NotificationsPage').then((module) => ({
+    default: module.NotificationsPage,
+  })),
+)
+
+function RouteFallback() {
+  const { t } = useI18n()
+  return (
+    <p className="text-sm text-muted-foreground" role="status">
+      {t('common.loading')}
+    </p>
+  )
+}
+
+export function LazyPage({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>
+}
 
 function UnconfiguredScreen() {
   const { t } = useI18n()
@@ -47,18 +81,11 @@ function GuardedRoutes() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage />} />
-        <Route
-          path="agenda"
-          element={<PhasePlaceholder phase="2" module="Agenda" />}
-        />
-        <Route
-          path="financas"
-          element={<PhasePlaceholder phase="3" module="FinanÃ§as" />}
-        />
-        <Route
-          path="diario"
-          element={<PhasePlaceholder phase="4" module="DiÃ¡rio" />}
-        />
+        <Route path="agenda" element={<LazyPage><AgendaPage /></LazyPage>} />
+        <Route path="notificacoes" element={<LazyPage><NotificationsPage /></LazyPage>} />
+        <Route path="financas" element={<LazyPage><FinancePage /></LazyPage>} />
+        <Route path="diario" element={<LazyPage><DiaryPage /></LazyPage>} />
+        <Route path="assistente" element={<LazyPage><AssistantPage /></LazyPage>} />
         <Route
           path="quadro"
           element={<PhasePlaceholder phase="4" module="Quadro" />}

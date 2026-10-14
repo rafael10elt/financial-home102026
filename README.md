@@ -65,6 +65,53 @@ Nada é executado automaticamente no Supabase pelo projeto.
 - SPA redirect: configurado em `netlify.toml`
 - Variáveis de produção: configure no painel do Netlify (não versionadas).
 
+## IA com Groq (Edge Functions do Supabase)
+
+O chat e a chave Groq exigem duas Edge Functions implantadas. Sem elas, a
+tela do assistente mostra o estado real de "backend indisponível" — nada é
+simulado.
+
+Pré-requisitos: [Supabase CLI](https://supabase.com/docs/guides/cli),
+`FH-SQL-005` executado, e uma chave de criptografia de 32 bytes:
+
+```bash
+# Gerar a chave de criptografia (guarde em local seguro, fora do Git)
+openssl rand -base64 32
+
+# Login + vínculo ao projeto
+supabase login
+supabase link --project-ref SEU-PROJECT-REF
+
+# Segredos (nunca no repositório)
+supabase secrets set GROQ_ENC_KEY="<base64-de-32-bytes>"
+# SUPABASE_URL, SUPABASE_ANON_KEY e SUPABASE_SERVICE_ROLE_KEY
+# já existem no ambiente das funções automaticamente.
+
+# Implantar
+supabase functions deploy groq-chat
+supabase functions deploy groq-config
+```
+
+Depois disso, o dono da casa define a chave em
+Configurações → "Chave Groq (IA)": a chave é validada contra a API Groq
+**antes** de ser salva (criptografada em `ai_config_fh`). A troca é feita
+pela mesma tela, sem editar código.
+
+**Chave exposta anteriormente:** se a chave Groq compartilhada no início do
+projeto ainda estiver ativa em algum lugar, gere uma nova no painel da Groq
+e troque pela tela de configurações (a antiga pode ser revogada na Groq).
+
+## Automações (n8n)
+
+O app funciona sem o n8n. Para conectar:
+
+1. No n8n, crie um workflow com trigger **Webhook** (POST, JSON).
+2. Na tela Assistente → Automações, salve a URL do webhook (somente o dono
+   da casa).
+3. Use "Enviar resumo agora" para testar — o app mostra o HTTP real.
+4. O payload `digest.json` contém totais e próximos vencimentos (sem segredos);
+   use "Copiar resumo JSON" para montar o workflow.
+
 ## Convenções
 
 - Objetos de banco personalizados terminam em `_fh`.

@@ -1,10 +1,42 @@
 ﻿import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
 import { useI18n } from '../i18n'
 import { Button } from '../ui/Button'
 import { cn } from '../lib/cn'
 import { ConnectionStatus } from '../ui/ConnectionStatus'
+import { pendingCount, useOutbox } from '../offline/outbox'
+import { useOnlineSync } from '../offline/useOnline'
+
+function useUnreadCount(): number {
+  const { supabase, user } = useAuth()
+  const [count, setCount] = useState(0)
+
+  useEffect(() => {
+    if (!supabase || !user) {
+      queueMicrotask(() => setCount(0))
+      return
+    }
+    let cancelled = false
+    void Promise.resolve()
+      .then(() =>
+        supabase
+          .from('notifications_fh')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .is('read_at', null),
+      )
+      .then(({ count: total }) => {
+        if (!cancelled) setCount(total ?? 0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, user])
+
+  return count
+}
 
 export function AppShell() {
   const { t } = useI18n()
@@ -15,17 +47,26 @@ export function AppShell() {
   const householdName = state.kind === 'ready' ? state.household.name : null
   const userName =
     (user?.user_metadata?.display_name as string | undefined) ?? user?.email ?? ''
+  const unread = useUnreadCount()
+  const outboxOps = useOutbox((state) => state.ops)
+  const outboxPending = pendingCount(outboxOps)
+  const { syncing } = useOnlineSync()
 
   const items = [
     { to: '/', label: t('nav.overview'), end: true },
     { to: '/agenda', label: t('nav.agenda') },
     { to: '/financas', label: t('nav.finance') },
     { to: '/diario', label: t('nav.diary') },
+    { to: '/assistente', label: t('nav.assistant') },
     { to: '/quadro', label: t('nav.board') },
     { to: '/configuracoes', label: t('nav.settings') },
   ] as const
 
   async function handleSignOut() {
+    if (outboxPending > 0) {
+      const confirmed = window.confirm(t('sync.logoutWarn', { n: outboxPending }))
+      if (!confirmed) return
+    }
     await signOut()
     navigate('/entrar')
   }
@@ -47,6 +88,36 @@ export function AppShell() {
 
           <div className="ml-auto flex items-center gap-2">
             <ConnectionStatus />
+            {syncing ? (
+              <span className="text-xs text-muted-foreground" role="status">
+                {t('connection.syncing')}
+              </span>
+            ) : outboxPending > 0 ? (
+              <button
+                type="button"
+                onClick={() => void navigate('/configuracoes')}
+                className="rounded-full border border-border bg-muted px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+                aria-label={t('sync.pending', { n: outboxPending })}
+              >
+                ⏳ {outboxPending}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void navigate('/notificacoes')}
+              aria-label={`${t('notif.title')}${unread > 0 ? ` (${t('notif.unread', { n: unread })})` : ''}`}
+              className="relative inline-flex size-8 items-center justify-center rounded-md border border-border text-lg hover:bg-muted"
+            >
+              <span aria-hidden="true">🔔</span>
+              {unread > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground"
+                >
+                  {unread > 99 ? '99+' : unread}
+                </span>
+              )}
+            </button>
             <span className="hidden text-xs text-muted-foreground sm:inline">
               {t('auth.signedInAs', { name: userName })}
             </span>

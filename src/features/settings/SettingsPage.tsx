@@ -10,6 +10,8 @@ import { useAuth } from '../../auth/context'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Button } from '../../ui/Button'
 import { cn } from '../../lib/cn'
+import { GroqKeySection } from './GroqKeySection'
+import { SyncSection } from './SyncSection'
 
 function ChoiceGroup<T extends string>({
   label,
@@ -163,6 +165,10 @@ export function SettingsPage() {
         <CardTitle className="mb-1">{t('settings.account')}</CardTitle>
         <CardDescription>{user?.email ?? '—'}</CardDescription>
       </Card>
+
+      <GroqKeySection onChanged={() => undefined} />
+
+      <SyncSection />
     </div>
   )
 }
