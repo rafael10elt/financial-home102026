@@ -998,3 +998,41 @@ até a lista de ações manuais abaixo ser cumprida.
    nesta rodada — inclui SQL 002→006, `.env`, deploy, chave e testes manuais).
 2. **Agente (quando o ambiente existir):** revalidação assistida fase a fase
    e marcação dos critérios como confirmados por evidência.
+
+---
+
+## Rodada 011 — Suporte ao teste de isolamento RLS
+
+**Data:** 2026-10-14
+**Fase:** 1/7 — validação assistida (sem código de app alterado)
+**Objetivo:** destravar o usuário na validação de isolamento do RLS.
+
+### Ocorrido
+
+- Minha instrução anterior usava placeholders (`UUID-A`, `COLE-O-CODIGO-AQUI`)
+  sem deixar claro que precisavam ser substituídos — o usuário colou
+  literalmente e recebeu `22P02: invalid input syntax for type uuid`.
+  Falha de instrução minha, sem impacto no banco (erro antes de qualquer escrita).
+
+### Arquivo criado
+
+- `supabase/tests/rls-isolamento.sql` — script único e idempotente que: cria
+  3 usuários via `auth.users` (bcrypt com `crypt`/`gen_salt`, e-mail confirmado,
+  `instance_id` zero-UUID padrão); A cria a casa; B entra com o código
+  (resolvido por e-mail via temp table, sem copiar nada); C verifica 0 linhas;
+  confere os perfis do trigger. Limpeza incluída (etapa 0 + bloco opcional).
+  Verificado: 0 U+FFFD. Não é migração — não entra no `banco.sql`.
+
+### Pendências
+
+1. Usuário executa o script e informa os 5 resultados (3, 1+código, 1, 0, 3).
+2. Se C enxergar 1 linha: furo no RLS — investigar com prioridade máxima.
+
+### Adendo 2026-10-14 — etapa 3 não concluiu (B com household NULL)
+
+Evidência no print do usuário (etapa 5): A com casa, B e C com NULL.
+Diagnóstico: o join de B via temp table `tmp_codigo` não persistiu entre as
+transações nesse editor. Correção no `supabase/tests/rls-isolamento.sql`:
+etapa 3 reescrita como bloco `DO $$` único (lê o código e faz o join sem
+depender de temp table) + etapa 3b de prova (B enxerga 1 linha). A etapa 2
+passou a exibir `id, name, join_code` direto, sem temp table.
