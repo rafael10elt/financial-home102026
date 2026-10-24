@@ -1478,3 +1478,17 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 
 - Preferência inicial do tema alterada de “Sistema” para “Escuro” no armazenamento e no script anti-flash do HTML, para evitar que a primeira renderização apareça clara.
 - Preferências explícitas previamente salvas continuam preservadas.
+# 2026-10-24 — Dashboard financeiro, widgets e cotações automáticas
+
+- Resumo de Finanças agora oferece widgets de indicadores, comparação realizado/previsto, donut de despesas pagas por categoria, contas, resultados por categoria/pessoa e câmbio.
+- Donut e barras usam valores do intervalo escolhido e têm legendas/valores para explicar o conjunto dos dados; categorias além das seis principais são agrupadas em “Outras categorias”. Widgets podem ser ocultados e reordenados com controles acessíveis; a configuração é persistida em `localStorage` por `user.id`, separada para cada perfil no navegador.
+- Câmbio automático via Frankfurter, em EUR para GBP/BRL/USD; dados ficam em cache local por 12 horas, atualizam ao abrir o painel e podem ser atualizados manualmente. As cotações automáticas são usadas na consolidação se não houver uma cotação manual para o mesmo par.
+- Limite da fonte: a API gratuita fornece taxas de referência diárias, não feed de mercado em tempo real. O widget mostra a data da referência e atribui a fonte. Nenhuma chave ou tabela nova é necessária.
+- Banco: sem mudanças; não executar SQL no Supabase.
+- Verificação: `npm run build` concluído com sucesso; permanece o aviso conhecido sobre chunks acima de 500 kB.
+# 2026-10-24 — Widgets configuráveis na Visão geral
+
+- Personalização da Visão geral ampliada: seleção de widgets visíveis, reordenação, restauração dos padrões e persistência por perfil no navegador. A sincronização existente em `dashboard_layouts_fh` permanece compatível, incluindo layouts antigos em formato de lista.
+- Adicionado widget opcional de câmbio automático EUR → GBP/BRL/USD, reutilizando fonte/cache Frankfurter já usado no resumo financeiro. O câmbio fica oculto por padrão na Visão geral e pode ser ativado pelo modal “Widgets”.
+- Confirmações de personalização exibidas por toast; sem alteração de schema, não executar SQL no Supabase.
+- Verificação: `npm run build` concluído com sucesso; aviso existente de chunks >500 kB permanece.

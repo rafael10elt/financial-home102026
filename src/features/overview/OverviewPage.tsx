@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../auth/context'
@@ -15,6 +15,9 @@ import { ClocksWidget } from '../../ui/ClocksWidget'
 import { WeatherWidget } from '../../ui/WeatherWidget'
 import { TransactionDialog } from '../finance/FinanceDialogs'
 import { useToast } from '../../ui/toastContext'
+import { useLiveRates } from '../../finance/useLiveRates'
+import { ExchangeRateWidget } from '../finance/FinanceDashboardCharts'
+import { DashboardWidgetsDialog } from '../finance/DashboardWidgetsDialog'
 
 const DEFAULT_WIDGETS = [
   'clocks',
@@ -25,31 +28,41 @@ const DEFAULT_WIDGETS = [
   'mood',
   'financeSoon',
   'diarySoon',
+  'exchange',
 ] as const
 
 type WidgetId = (typeof DEFAULT_WIDGETS)[number]
 
-const LAYOUT_KEY = 'fh.layout.v1'
+type WidgetLayout = { order: WidgetId[]; hidden: WidgetId[] }
+const DEFAULT_LAYOUT: WidgetLayout = { order: [...DEFAULT_WIDGETS], hidden: ['exchange'] }
 
-function sanitizeLayout(raw: unknown): WidgetId[] {
-  if (!Array.isArray(raw)) return [...DEFAULT_WIDGETS]
+function sanitizeLayout(raw: unknown): WidgetLayout {
+  const source = Array.isArray(raw) ? { order: raw, hidden: [] } : raw as { order?: unknown; hidden?: unknown } | null
+  if (!source || !Array.isArray(source.order)) return { order: [...DEFAULT_LAYOUT.order], hidden: [...DEFAULT_LAYOUT.hidden] }
   const known = new Set<string>(DEFAULT_WIDGETS)
-  const cleaned = raw.filter(
+  const cleaned = source.order.filter(
     (item): item is WidgetId => typeof item === 'string' && known.has(item),
   )
   for (const widget of DEFAULT_WIDGETS) {
     if (!cleaned.includes(widget)) cleaned.push(widget)
   }
-  return cleaned
+  const hidden = Array.isArray(source.hidden)
+    ? source.hidden.filter((item): item is WidgetId => typeof item === 'string' && known.has(item))
+    : []
+  // Layouts antigos não tinham câmbio: ele entra como opção, oculto por padrão.
+  if (!source.order.includes('exchange') && !hidden.includes('exchange')) hidden.push('exchange')
+  return { order: cleaned, hidden }
 }
 
-function loadLocalLayout(): WidgetId[] {
+function layoutKey(profileId: string | undefined): string { return `fh.layout.v2:${profileId ?? 'guest'}` }
+
+function loadLocalLayout(profileId: string | undefined): WidgetLayout {
   try {
-    const raw = localStorage.getItem(LAYOUT_KEY)
-    if (!raw) return [...DEFAULT_WIDGETS]
+    const raw = localStorage.getItem(layoutKey(profileId))
+    if (!raw) return { order: [...DEFAULT_LAYOUT.order], hidden: [...DEFAULT_LAYOUT.hidden] }
     return sanitizeLayout(JSON.parse(raw))
   } catch {
-    return [...DEFAULT_WIDGETS]
+    return { order: [...DEFAULT_LAYOUT.order], hidden: [...DEFAULT_LAYOUT.hidden] }
   }
 }
 
@@ -61,11 +74,24 @@ export function OverviewPage() {
   const agenda = useAgendaData()
   const finance = useFinanceData()
   const { notify } = useToast()
+  const liveRates = useLiveRates()
 
-  const [widgets, setWidgets] = useState<WidgetId[]>(() => loadLocalLayout())
+  const [layout, setLayout] = useState<WidgetLayout>(() => loadLocalLayout(user?.id))
   const [editingLayout, setEditingLayout] = useState(false)
+  const layoutProfileRef = useRef(user?.id)
   const [quickExpense, setQuickExpense] = useState(false)
   const [savingQuickExpense, setSavingQuickExpense] = useState(false)
+
+  useEffect(() => {
+    if (layoutProfileRef.current === user?.id) return
+    layoutProfileRef.current = user?.id
+    setLayout(loadLocalLayout(user?.id))
+  }, [user?.id])
+
+  useEffect(() => {
+    if (layoutProfileRef.current !== user?.id) return
+    try { localStorage.setItem(layoutKey(user?.id), JSON.stringify(layout)) } catch { /* cache local opcional */ }
+  }, [layout, user?.id])
 
   // Hidrata o layout da conta (nuvem vence apenas na primeira carga).
   useEffect(() => {
@@ -78,18 +104,22 @@ export function OverviewPage() {
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
-        const layout = (data as { layout: unknown } | null)?.layout
-        if (layout !== undefined && layout !== null) setWidgets(sanitizeLayout(layout))
+        const cloudLayout = (data as { layout: unknown } | null)?.layout
+        if (cloudLayout !== undefined && cloudLayout !== null) {
+          const next = sanitizeLayout(cloudLayout)
+          setLayout(next)
+          try { localStorage.setItem(layoutKey(user.id), JSON.stringify(next)) } catch { /* cache local opcional */ }
+        }
       })
     return () => {
       cancelled = true
     }
   }, [supabase, user])
 
-  function persist(next: WidgetId[]) {
-    setWidgets(next)
+  function persist(next: WidgetLayout) {
+    setLayout(next)
     try {
-      localStorage.setItem(LAYOUT_KEY, JSON.stringify(next))
+      localStorage.setItem(layoutKey(user?.id), JSON.stringify(next))
     } catch {
       // Cache local opcional.
     }
@@ -98,15 +128,6 @@ export function OverviewPage() {
         .from('dashboard_layouts_fh')
         .upsert({ user_id: user.id, layout: next }, { onConflict: 'user_id' })
     }
-  }
-
-  function move(index: number, delta: -1 | 1) {
-    const next = [...widgets]
-    const target = index + delta
-    if (target < 0 || target >= next.length) return
-    const [moved] = next.splice(index, 1)
-    if (moved) next.splice(target, 0, moved)
-    persist(next)
   }
 
   const todayKey = (() => {
@@ -211,6 +232,8 @@ export function OverviewPage() {
         )
       case 'financeSoon':
         return <FinanceSummaryWidget />
+      case 'exchange':
+        return <ExchangeRateWidget rates={liveRates.rates} date={liveRates.date} loading={liveRates.loading} error={liveRates.error} onRefresh={() => void liveRates.refresh()} />
       case 'mood':
         return <MoodWidget />
       case 'diarySoon':
@@ -227,7 +250,7 @@ export function OverviewPage() {
             size="sm"
             variant="secondary"
             aria-pressed={editingLayout}
-            onClick={() => setEditingLayout((value) => !value)}
+            onClick={() => setEditingLayout(true)}
           >
             {t('overview.widgets')}
           </Button>
@@ -240,33 +263,40 @@ export function OverviewPage() {
         </p>
       )}
 
-      {widgets.map((id, index) => (
+      {layout.order.filter((id) => !layout.hidden.includes(id)).map((id) => (
         <section key={id} aria-label={id}>
-          {editingLayout && (
-            <div className="mb-1 flex gap-1">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={index === 0}
-                onClick={() => move(index, -1)}
-                aria-label={`${t('overview.moveUp')}: ${id}`}
-              >
-                ↑
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={index === widgets.length - 1}
-                onClick={() => move(index, 1)}
-                aria-label={`${t('overview.moveDown')}: ${id}`}
-              >
-                ↓
-              </Button>
-            </div>
-          )}
           {renderWidget(id)}
         </section>
       ))}
+      {layout.order.every((id) => layout.hidden.includes(id)) && <Card><CardTitle>{t('overview.allHidden')}</CardTitle></Card>}
+
+      {editingLayout && (
+        <DashboardWidgetsDialog
+          labels={{
+            clocks: t('overview.widget.clocks'), weather: t('weather.title'), quickActions: t('overview.quickActions'),
+            agendaToday: t('overview.agendaToday'), tasksOpen: t('overview.tasksOpen'), mood: t('diary.moodToday'),
+            financeSoon: t('overview.financeSoon'), diarySoon: t('overview.diarySoon'), exchange: t('fin.dashboard.exchange'),
+          }}
+          title={t('overview.widgets')}
+          description={t('overview.widgetDescription')}
+          resetLabel={t('fin.dashboard.reset')}
+          doneLabel={t('fin.dashboard.done')}
+          showLabel={(name) => t('fin.dashboard.show', { name })}
+          moveUpLabel={(name) => t('fin.dashboard.up', { name })}
+          moveDownLabel={(name) => t('fin.dashboard.down', { name })}
+          layout={layout}
+          onChange={persist}
+          onReset={() => {
+            const defaults = { order: [...DEFAULT_LAYOUT.order], hidden: [...DEFAULT_LAYOUT.hidden] }
+            persist(defaults)
+            notify('success', t('overview.widgets'), t('fin.dashboard.saved'))
+          }}
+          onClose={() => {
+            setEditingLayout(false)
+            notify('success', t('overview.widgets'), t('fin.dashboard.saved'))
+          }}
+        />
+      )}
 
       <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2 pb-[env(safe-area-inset-bottom)]">
         <Button size="md" variant="secondary" className="h-12 rounded-full px-5 shadow-lg" onClick={() => void navigate('/assistente')}>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../auth/context'
 import { useHousehold } from '../../household/context'
@@ -26,8 +26,33 @@ import {
 import { ImportWizard } from './ImportWizard'
 import { FinanceCategoriesPanel } from './FinanceCategoriesPanel'
 import { useToast } from '../../ui/toastContext'
+import { useLiveRates } from '../../finance/useLiveRates'
+import { CashflowChart, CategoryDonutChart, ExchangeRateWidget } from './FinanceDashboardCharts'
+import { DashboardWidgetsDialog, type FinanceWidgetId, type FinanceWidgetLayout } from './DashboardWidgetsDialog'
 
 type Tab = 'summary' | 'transactions' | 'categories' | 'recurrences' | 'transfers' | 'goals' | 'exchange' | 'import'
+const defaultWidgetLayout: FinanceWidgetLayout = {
+  order: ['metrics', 'flow', 'categoryDonut', 'accounts', 'byCategory', 'byPerson', 'exchange'],
+  hidden: [],
+}
+
+function dashboardStorageKey(profileId: string | undefined): string {
+  return `fh.finance.dashboard.v1:${profileId ?? 'guest'}`
+}
+
+function loadDashboardLayout(profileId: string | undefined): FinanceWidgetLayout {
+  try {
+    const stored = localStorage.getItem(dashboardStorageKey(profileId))
+    if (!stored) return defaultWidgetLayout
+    const parsed = JSON.parse(stored) as FinanceWidgetLayout
+    const ids = new Set(defaultWidgetLayout.order)
+    const order = [...new Set(parsed.order)].filter((id) => ids.has(id))
+    for (const id of defaultWidgetLayout.order) if (!order.includes(id)) order.push(id)
+    return { order, hidden: [...new Set(parsed.hidden ?? [])].filter((id) => ids.has(id)) }
+  } catch {
+    return defaultWidgetLayout
+  }
+}
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
@@ -60,6 +85,7 @@ export function FinancePage() {
   const { user } = useAuth()
   const { state: householdState } = useHousehold()
   const finance = useFinanceData()
+  const liveRates = useLiveRates()
 
   const [tab, setTab] = useState<Tab>('summary')
   const [periodStart, setPeriodStart] = useState(() => currentMonthRange().start)
@@ -83,6 +109,20 @@ export function FinancePage() {
   const [filterAccount, setFilterAccount] = useState('')
   const [filterKind, setFilterKind] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  const [widgetLayout, setWidgetLayout] = useState<FinanceWidgetLayout>(() => loadDashboardLayout(user?.id))
+  const [customizeWidgets, setCustomizeWidgets] = useState(false)
+  const widgetProfileRef = useRef(user?.id)
+
+  useEffect(() => {
+    if (widgetProfileRef.current === user?.id) return
+    widgetProfileRef.current = user?.id
+    setWidgetLayout(loadDashboardLayout(user?.id))
+  }, [user?.id])
+
+  useEffect(() => {
+    if (widgetProfileRef.current !== user?.id) return
+    try { localStorage.setItem(dashboardStorageKey(user?.id), JSON.stringify(widgetLayout)) } catch { /* armazenamento local opcional */ }
+  }, [user?.id, widgetLayout])
 
   const members =
     householdState.kind === 'ready'
@@ -116,8 +156,11 @@ export function FinancePage() {
         })
       }
     }
+    for (const [key, rate] of Object.entries(liveRates.quotes)) {
+      if (!map.has(key)) map.set(key, rate)
+    }
     return map
-  }, [finance.rates, t])
+  }, [finance.rates, liveRates.quotes, t])
 
   const periodTxs = useMemo(() => {
     return finance.transactions.filter((tx) => tx.date >= periodStart && tx.date <= periodEnd)
@@ -147,6 +190,28 @@ export function FinancePage() {
     } catch (error) {
       return { data: null, error: error instanceof Error ? error.message : String(error) }
     }
+  }, [periodTxs, quotes])
+
+  const expenseByCategory = useMemo(() => {
+    try {
+      const groups = groupBy(
+        periodTxs.filter((tx) => tx.kind === 'expense' && tx.status === 'pago').map(toReportTx),
+        'category_id', 'EUR', quotes,
+      )
+      return [...groups.entries()].map(([id, total]) => ({
+        name: id === 'sem-grupo' ? t('fin.noCategory') : categoryName(id),
+        minor: Math.abs(total.minor),
+      })).filter((entry) => entry.minor > 0).sort((a, b) => b.minor - a.minor)
+    } catch { return [] }
+  }, [periodTxs, quotes, finance.categories, t])
+
+  const groupedByCategory = useMemo(() => {
+    try { return groupBy(periodTxs.map(toReportTx), 'category_id', 'EUR', quotes) }
+    catch { return new Map() }
+  }, [periodTxs, quotes])
+  const groupedByPerson = useMemo(() => {
+    try { return groupBy(periodTxs.map(toReportTx), 'owner_id', 'EUR', quotes) }
+    catch { return new Map() }
   }, [periodTxs, quotes])
 
   const filteredTxs = useMemo(
@@ -316,6 +381,64 @@ export function FinancePage() {
 
   const filterClass = 'h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground'
 
+  const widgetLabels: Record<FinanceWidgetId, string> = {
+    metrics: t('fin.dashboard.metrics'), flow: t('fin.dashboard.flow'), categoryDonut: t('fin.dashboard.donut'),
+    accounts: t('fin.dashboard.accounts'), byCategory: t('fin.dashboard.byCategory'),
+    byPerson: t('fin.dashboard.byPerson'), exchange: t('fin.dashboard.exchange'),
+  }
+  const dashboardWidgets: Record<FinanceWidgetId, ReactNode> = {
+    metrics: consolidation.error ? (
+      <Card><p className="text-sm text-destructive" role="alert">{consolidation.error}</p><CardDescription className="mt-1">{t('fin.noRate', { from: 'BRL', to: 'EUR' })}</CardDescription></Card>
+    ) : consolidation.data ? (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SummaryCard label={t('fin.summary.income')} total={consolidation.data.incomeRealized} />
+        <SummaryCard label={t('fin.summary.expense')} total={consolidation.data.expenseRealized} />
+        <SummaryCard label={t('fin.summary.balance')} total={consolidation.data.balance} strong />
+        <SummaryCard label={t('fin.summary.plannedIn')} total={consolidation.data.incomePlanned} />
+        <SummaryCard label={t('fin.summary.plannedOut')} total={consolidation.data.expensePlanned} />
+        <Card><CardTitle className="text-sm">{t('fin.summary.pending')}</CardTitle><p className="mt-1 text-2xl font-semibold tabular-nums">{consolidation.data.pendingCount}</p><CardDescription>{t('fin.summary.overdue')}: {consolidation.data.overdueCount}</CardDescription></Card>
+      </div>
+    ) : null,
+    flow: consolidation.data ? <CashflowChart incomeRealized={consolidation.data.incomeRealized} expenseRealized={consolidation.data.expenseRealized} incomePlanned={consolidation.data.incomePlanned} expensePlanned={consolidation.data.expensePlanned} /> : null,
+    categoryDonut: <CategoryDonutChart items={expenseByCategory} />,
+    accounts: (
+      <Card>
+        <CardTitle className="mb-2">{t('fin.accounts')}</CardTitle>
+        {finance.accounts.length === 0 ? <p className="text-sm text-muted-foreground">{t('fin.empty')}</p> : (
+          <ul className="flex flex-col divide-y divide-[var(--border)]">
+            {finance.accounts.map((account) => {
+              const txs = finance.transactions.filter((tx) => tx.account_id === account.id && tx.status !== 'cancelado')
+              const trs = finance.transfers.filter((tr) => tr.from_account === account.id || tr.to_account === account.id)
+              const movements = [
+                ...txs.map((tx) => ({ kind: (tx.kind === 'income' ? 'in' : 'out') as 'in' | 'out', minor: tx.currency === account.currency ? toMinorUnits(tx.amount, tx.currency) : 0, confirmed: tx.status === 'pago' || tx.status === 'recebido' })),
+                ...trs.flatMap((tr) => {
+                  const legs: { kind: 'in' | 'out'; minor: number; confirmed: boolean }[] = []
+                  if (tr.from_account === account.id && tr.currency === account.currency) legs.push({ kind: 'out', minor: toMinorUnits(tr.amount, tr.currency), confirmed: true })
+                  if (tr.to_account === account.id) {
+                    const targetCurrency = tr.to_currency ?? tr.currency
+                    if (targetCurrency === account.currency) legs.push({ kind: 'in', minor: toMinorUnits(tr.to_amount ?? tr.amount, targetCurrency), confirmed: true })
+                  }
+                  return legs
+                }),
+              ]
+              const balance = accountBalance(toMinorUnits(account.opening_balance, account.currency), movements)
+              return (
+                <li key={account.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col"><span className="font-medium">{account.name} <span className="text-xs text-muted-foreground">({account.currency})</span></span><span className="text-xs text-muted-foreground">{t(`fin.accountType.${account.type}`)} · {memberName(account.owner_id)}</span></div>
+                  <div className="flex flex-wrap items-center gap-2"><div className="text-right"><div className="font-semibold tabular-nums">{formatMoney(balance.current, account.currency)}</div>{(balance.pendingIn > 0 || balance.pendingOut > 0) && <div className="text-xs text-muted-foreground tabular-nums">{t('fin.pendingBalance')}: +{formatMoney(balance.pendingIn, account.currency)} / −{formatMoney(balance.pendingOut, account.currency)}</div>}</div><Button size="sm" variant="secondary" onClick={() => setDialog({ name: 'account', editing: account })}>{t('fin.editAccount')}</Button><Button size="sm" variant="ghost" onClick={() => setConfirmDelete({ table: 'financial_accounts_fh', id: account.id, before: account })}>{t('agenda.delete')}</Button></div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        <div className="mt-3"><Button size="sm" onClick={() => setDialog({ name: 'account', editing: null })}>{t('fin.newAccount')}</Button></div>
+      </Card>
+    ),
+    byCategory: <GroupCard title={t('fin.byCategory')} groups={groupedByCategory} nameFor={(id) => (id === 'sem-grupo' ? t('fin.noCategory') : categoryName(id))} />,
+    byPerson: <GroupCard title={t('fin.byPerson')} groups={groupedByPerson} nameFor={(id) => (id === 'sem-grupo' ? t('fin.unassigned') : memberName(id))} />,
+    exchange: <ExchangeRateWidget rates={liveRates.rates} date={liveRates.date} loading={liveRates.loading} error={liveRates.error} onRefresh={() => void liveRates.refresh()} />,
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold">{t('fin.title')}</h1>
@@ -387,130 +510,17 @@ export function FinancePage() {
             }}>
               {t('common.clear')}
             </Button>
-          </div>
-
-          {consolidation.error ? (
-            <Card>
-              <p className="text-sm text-destructive" role="alert">
-                {consolidation.error}
-              </p>
-              <CardDescription className="mt-1">
-                {t('fin.noRate', { from: 'BRL', to: 'EUR' })}
-              </CardDescription>
-            </Card>
-          ) : (
-            consolidation.data && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <SummaryCard label={t('fin.summary.income')} total={consolidation.data.incomeRealized} />
-                <SummaryCard label={t('fin.summary.expense')} total={consolidation.data.expenseRealized} />
-                <SummaryCard label={t('fin.summary.balance')} total={consolidation.data.balance} strong />
-                <SummaryCard label={t('fin.summary.plannedIn')} total={consolidation.data.incomePlanned} />
-                <SummaryCard label={t('fin.summary.plannedOut')} total={consolidation.data.expensePlanned} />
-                <Card>
-                  <CardTitle className="text-sm">{t('fin.summary.pending')}</CardTitle>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums">{consolidation.data.pendingCount}</p>
-                  <CardDescription>
-                    {t('fin.summary.overdue')}: {consolidation.data.overdueCount}
-                  </CardDescription>
-                </Card>
-              </div>
-            )
-          )}
-
-          <Card>
-            <CardTitle className="mb-2">{t('fin.accounts')}</CardTitle>
-            {finance.accounts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t('fin.empty')}</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-[var(--border)]">
-                {finance.accounts.map((account) => {
-                  const txs = finance.transactions.filter((tx) => tx.account_id === account.id && tx.status !== 'cancelado')
-                  const trs = finance.transfers.filter(
-                    (tr) => tr.from_account === account.id || tr.to_account === account.id,
-                  )
-                  const movements = [
-                    ...txs.map((tx) => ({
-                      kind: (tx.kind === 'income' ? 'in' : 'out') as 'in' | 'out',
-                      minor:
-                        tx.currency === account.currency
-                          ? toMinorUnits(tx.amount, tx.currency)
-                          : 0,
-                      confirmed: tx.status === 'pago' || tx.status === 'recebido',
-                    })),
-                    ...trs.flatMap((tr) => {
-                      const legs: { kind: 'in' | 'out'; minor: number; confirmed: boolean }[] = []
-                      if (tr.from_account === account.id && tr.currency === account.currency) {
-                        legs.push({ kind: 'out', minor: toMinorUnits(tr.amount, tr.currency), confirmed: true })
-                      }
-                      if (tr.to_account === account.id) {
-                        const toCurrency = tr.to_currency ?? tr.currency
-                        if (toCurrency === account.currency) {
-                          legs.push({
-                            kind: 'in',
-                            minor: toMinorUnits(tr.to_amount ?? tr.amount, toCurrency),
-                            confirmed: true,
-                          })
-                        }
-                      }
-                      return legs
-                    }),
-                  ]
-                  const balance = accountBalance(toMinorUnits(account.opening_balance, account.currency), movements)
-                  return (
-                    <li key={account.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex flex-col">
-                        <span className="font-medium">
-                          {account.name} <span className="text-xs text-muted-foreground">({account.currency})</span>
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {t(`fin.accountType.${account.type}`)} · {memberName(account.owner_id)}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-right">
-                          <div className="font-semibold tabular-nums">
-                            {formatMoney(balance.current, account.currency)}
-                          </div>
-                          {(balance.pendingIn > 0 || balance.pendingOut > 0) && (
-                            <div className="text-xs text-muted-foreground tabular-nums">
-                              {t('fin.pendingBalance')}: +{formatMoney(balance.pendingIn, account.currency)} / −
-                              {formatMoney(balance.pendingOut, account.currency)}
-                            </div>
-                          )}
-                        </div>
-                        <Button size="sm" variant="secondary" onClick={() => setDialog({ name: 'account', editing: account })}>
-                          {t('fin.editAccount')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setConfirmDelete({ table: 'financial_accounts_fh', id: account.id, before: account })}
-                        >
-                          {t('agenda.delete')}
-                        </Button>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-            <div className="mt-3">
-              <Button size="sm" onClick={() => setDialog({ name: 'account', editing: null })}>
-                {t('fin.newAccount')}
-              </Button>
+            <div className="ml-auto">
+              <Button size="sm" variant="secondary" onClick={() => setCustomizeWidgets(true)}>{t('fin.dashboard.customize')}</Button>
             </div>
-          </Card>
-
-          <GroupCard
-            title={t('fin.byCategory')}
-            groups={groupBy(periodTxs.map(toReportTx), 'category_id', 'EUR', quotes)}
-            nameFor={(id) => (id === 'sem-grupo' ? t('fin.noCategory') : categoryName(id))}
-          />
-          <GroupCard
-            title={t('fin.byPerson')}
-            groups={groupBy(periodTxs.map(toReportTx), 'owner_id', 'EUR', quotes)}
-            nameFor={(id) => (id === 'sem-grupo' ? t('fin.unassigned') : memberName(id))}
-          />
+          </div>
+          {widgetLayout.order.filter((id) => !widgetLayout.hidden.includes(id)).map((id) => {
+            const widget = dashboardWidgets[id]
+            return widget ? <div key={id}>{widget}</div> : null
+          })}
+          {widgetLayout.order.every((id) => widgetLayout.hidden.includes(id)) && (
+            <Card><CardDescription>{t('fin.dashboard.allHidden')}</CardDescription></Card>
+          )}
         </div>
       )}
 
@@ -985,6 +995,28 @@ export function FinancePage() {
             </Button>
           </div>
         </Modal>
+      )}
+      {customizeWidgets && (
+        <DashboardWidgetsDialog
+          labels={widgetLabels}
+          title={t('fin.dashboard.title')}
+          description={t('fin.dashboard.description')}
+          resetLabel={t('fin.dashboard.reset')}
+          doneLabel={t('fin.dashboard.done')}
+          showLabel={(name) => t('fin.dashboard.show', { name })}
+          moveUpLabel={(name) => t('fin.dashboard.up', { name })}
+          moveDownLabel={(name) => t('fin.dashboard.down', { name })}
+          layout={widgetLayout}
+          onChange={setWidgetLayout}
+          onReset={() => {
+            setWidgetLayout(defaultWidgetLayout)
+            notify('success', t('fin.dashboard.customize'), t('fin.dashboard.saved'))
+          }}
+          onClose={() => {
+            setCustomizeWidgets(false)
+            notify('success', t('fin.dashboard.customize'), t('fin.dashboard.saved'))
+          }}
+        />
       )}
     </div>
   )
