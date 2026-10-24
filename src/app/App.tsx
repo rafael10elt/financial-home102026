@@ -10,6 +10,7 @@ import { OverviewPage } from '../features/overview/OverviewPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { PhasePlaceholder } from '../ui/PhasePlaceholder'
 import { Card, CardDescription, CardTitle } from '../ui/Card'
+import { Button } from '../ui/Button'
 
 // Code-splitting por rota: cada módulo pesado vira um chunk separado.
 // Overview/Settings/Login ficam no chunk inicial (primeira tela).
@@ -68,13 +69,28 @@ function LoadingScreen() {
   )
 }
 
+function HouseholdErrorScreen({ message, retry }: { message: string; retry: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-lg">
+        <CardTitle>Não foi possível verificar sua casa</CardTitle>
+        <CardDescription className="mt-3">A consulta ao Supabase falhou. A casa não será tratada como inexistente.</CardDescription>
+        <p className="mt-3 break-words text-sm text-destructive" role="alert">{message}</p>
+        <Button className="mt-4" onClick={retry}>{t('common.retry')}</Button>
+      </Card>
+    </div>
+  )
+}
+
 function GuardedRoutes() {
   const { status } = useAuth()
-  const { state } = useHousehold()
+  const { state, refresh } = useHousehold()
 
   if (status === 'loading') return <LoadingScreen />
   if (status === 'anonymous') return <Navigate to="/entrar" replace />
   if (state.kind === 'loading') return <LoadingScreen />
+  if (state.kind === 'error') return <HouseholdErrorScreen message={state.message} retry={() => void refresh()} />
   if (state.kind === 'none') return <OnboardingPage />
 
   return (

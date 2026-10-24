@@ -14,24 +14,29 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<HouseholdState>({ kind: 'none' })
   const requestId = useRef(0)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<{ found: boolean; error: string | null }> => {
     if (!supabase || !user) {
+      requestId.current += 1
       setState({ kind: 'none' })
-      return
+      return { found: false, error: null }
     }
     const current = ++requestId.current
     setState({ kind: 'loading' })
 
     const { data: household, error } = await fetchHousehold(supabase, user.id)
-    if (current !== requestId.current) return
+    if (current !== requestId.current) return { found: false, error: 'A consulta foi substituída por uma sessão mais recente.' }
 
     if (error || !household) {
+      if (error) {
+        setState({ kind: 'error', message: error })
+        return { found: false, error }
+      }
       setState({ kind: 'none' })
-      return
+      return { found: false, error: null }
     }
 
     const { data: members, error: membersError } = await fetchMembers(supabase, household.id)
-    if (current !== requestId.current) return
+    if (current !== requestId.current) return { found: false, error: 'A consulta foi substituída por uma sessão mais recente.' }
 
     setState({
       kind: 'ready',
@@ -39,6 +44,7 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
       members: membersError ? [] : members,
       joinCodeVisible: household.created_by === user.id,
     })
+    return { found: true, error: null }
   }, [supabase, user])
 
   useEffect(() => {
@@ -56,8 +62,11 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     async (name) => {
       if (!supabase) return { error: 'Supabase não configurado.' }
       const { error } = await createHouseholdRequest(supabase, name.trim())
-      if (!error) await refresh()
-      return { error }
+      if (error) return { error }
+      const result = await refresh()
+      if (result.error) return { error: `A casa foi criada, mas não foi possível confirmar o vínculo: ${result.error}` }
+      if (!result.found) return { error: 'A casa foi criada, mas não apareceu na consulta ao banco. Atualize a tela e confira o vínculo do perfil.' }
+      return { error: null }
     },
     [supabase, refresh],
   )
@@ -66,8 +75,11 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     async (code) => {
       if (!supabase) return { error: 'Supabase não configurado.' }
       const { error } = await joinHouseholdRequest(supabase, code.trim().toUpperCase())
-      if (!error) await refresh()
-      return { error }
+      if (error) return { error }
+      const result = await refresh()
+      if (result.error) return { error: `O código foi aceito, mas não foi possível confirmar a casa: ${result.error}` }
+      if (!result.found) return { error: 'O código foi aceito, mas a casa não apareceu na consulta ao banco.' }
+      return { error: null }
     },
     [supabase, refresh],
   )

@@ -3,7 +3,7 @@ import type { HouseholdState } from './service'
 
 export type HouseholdContextValue = {
   state: HouseholdState
-  refresh: () => Promise<void>
+  refresh: () => Promise<{ found: boolean; error: string | null }>
   createHousehold: (name: string) => Promise<{ error: string | null }>
   joinHousehold: (code: string) => Promise<{ error: string | null }>
 }

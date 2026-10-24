@@ -1135,3 +1135,38 @@ backend seguro.
 - Testar alternância Jéssica/Rafael em um mesmo navegador e verificar persistência
   do `auth.uid()`, membresia e preferência de tema por usuário.
 
+## Rodada 014 — Persistência da casa e padrão de modais/toasts
+
+**Data:** 2026-10-24  
+**Objetivo:** investigar a casa que parecia desaparecer após sair e estabelecer
+modais para confirmações e toasts para notificações.
+
+### Diagnóstico e mudanças
+
+- A criação usa `create_household_fh`; o logout usa `scope: 'local'`. A sessão
+  por perfil podia ser sobrescrita durante uma troca, pois o listener de auth
+  gravava o token atual no perfil selecionado enquanto `setSession` trocava a
+  identidade. `AuthProvider` agora suspende essa gravação durante a troca,
+  preserva explicitamente a sessão anterior e grava a sessão restaurada/criada
+  no perfil correto.
+- `HouseholdProvider` antes convertia erro ao consultar casa em estado `none`;
+  a UI voltava a oferecer “Criar casa”, ocultando uma falha de rede/RLS como se
+  não houvesse casa. Agora erro de consulta tem estado distinto e tela com ação
+  para tentar novamente. Criação/entrada só são confirmadas após uma nova
+  consulta encontrar a casa no Supabase.
+- Adicionado `ToastProvider` global e toasts de erro/sucesso nos fluxos de perfil,
+  casa, convite e saída. A saída usa modal; a tela sem casa também permite trocar
+  perfil com confirmação em modal. Removido o uso de `window.confirm`.
+- A preferência visual do usuário foi mantida; este ajuste não exige alteração
+  de banco nem execução de SQL.
+
+### Verificação
+
+- `npm run build`: passou (TypeScript + Vite). Permanece o aviso do chunk inicial
+  acima de 500 kB; nenhum teste foi executado.
+- Supabase remoto não foi consultado nesta rodada. Para verificar a persistência
+  real, executar a consulta somente leitura FH-SQL-007 do `banco.sql` no projeto
+  conectado e conferir a casa, o dono e o vínculo de Rafael.
+- Após a atualização, se ainda aparecer “não foi possível verificar”, a tela
+  mostrará o erro concreto da consulta em vez de sugerir criar outra casa.
+

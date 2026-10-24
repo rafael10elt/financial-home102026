@@ -18,6 +18,7 @@ export type HouseholdMember = {
 export type HouseholdState =
   | { kind: 'none' }
   | { kind: 'loading' }
+  | { kind: 'error'; message: string }
   | { kind: 'ready'; household: Household; members: HouseholdMember[]; joinCodeVisible: boolean }
 
 function mapError(message: string): string {

@@ -19,6 +19,8 @@ export const ptBR = {
   'auth.signIn': 'Entrar',
   'auth.signUp': 'Criar conta',
   'auth.signOut': 'Sair',
+  'auth.logoutConfirm': 'Sua casa e seus dados continuarão salvos. Você poderá selecionar este perfil novamente para voltar.',
+  'auth.logoutPending': 'Há {n} operação(ões) aguardando sincronização. Se sair agora, elas serão mantidas neste navegador.',
   'auth.toSignUp': 'Não tem conta? Criar',
   'auth.toSignIn': 'Já tem conta? Entrar',
   'auth.loading': 'Verificando sessão…',

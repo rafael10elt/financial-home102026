@@ -7,6 +7,7 @@ import { HouseholdProvider } from './household/HouseholdProvider'
 import { I18nProvider } from './i18n'
 import { PreferencesHydrator } from './preferences/PreferencesHydrator'
 import { applyPreferencesToDom, usePreferences } from './preferences/store'
+import { ToastProvider } from './ui/ToastProvider'
 import './styles/index.css'
 
 const rootElement = document.getElementById('root')
@@ -25,16 +26,18 @@ window
 
 createRoot(rootElement).render(
   <StrictMode>
-    <I18nProvider>
-      <AuthProvider>
-        <HouseholdProvider>
-          <PreferencesHydrator />
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </HouseholdProvider>
-      </AuthProvider>
-    </I18nProvider>
+    <ToastProvider>
+      <I18nProvider>
+        <AuthProvider>
+          <HouseholdProvider>
+            <PreferencesHydrator />
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </HouseholdProvider>
+        </AuthProvider>
+      </I18nProvider>
+    </ToastProvider>
   </StrictMode>,
 )
 

@@ -21,6 +21,8 @@ export const en: Record<TranslationKey, string> = {
   'auth.signIn': 'Sign in',
   'auth.signUp': 'Create account',
   'auth.signOut': 'Sign out',
+  'auth.logoutConfirm': 'Your household and data will stay saved. You can select this profile again to return.',
+  'auth.logoutPending': '{n} operation(s) are waiting to sync. If you sign out now, they will remain on this browser.',
   'auth.toSignUp': "Don't have an account? Create one",
   'auth.toSignIn': 'Already have an account? Sign in',
   'auth.loading': 'Checking session…',

@@ -20,6 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>(supabase ? 'loading' : 'unconfigured')
   const [profileName, setProfileName] = useState<string | null>(() => localStorage.getItem('fh.active-profile'))
   const initialized = useRef(false)
+  const switchingProfile = useRef(false)
 
   useEffect(() => {
     if (!supabase) return
@@ -43,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(nextSession)
       setStatus(nextSession ? 'authenticated' : 'anonymous')
       const active = localStorage.getItem('fh.active-profile')
-      if (active && nextSession) {
+      if (!switchingProfile.current && active && nextSession) {
         localStorage.setItem(`fh.auth.profile.${active.toLocaleLowerCase('pt-BR')}`, JSON.stringify(nextSession))
       }
     })
@@ -67,12 +68,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!supabase) return { error: 'Supabase não configurado.' }
     const normalized = name.trim()
     if (!normalized) return { error: 'Escolha um perfil válido.' }
+    const activeBeforeSwitch = localStorage.getItem('fh.active-profile')
+    switchingProfile.current = true
     try {
+      const { data: currentSession } = await supabase.auth.getSession()
+      if (currentSession.session && activeBeforeSwitch) {
+        localStorage.setItem(
+          `fh.auth.profile.${activeBeforeSwitch.toLocaleLowerCase('pt-BR')}`,
+          JSON.stringify(currentSession.session),
+        )
+      }
       // Cada perfil mantém uma sessão anônima própria neste navegador. Assim,
       // o banco continua recebendo um auth.uid() diferente por pessoa.
       const storageKey = `fh.auth.profile.${normalized.toLocaleLowerCase('pt-BR')}`
-      localStorage.setItem('fh.active-profile', normalized)
-      setProfileName(normalized)
       const cached = localStorage.getItem(storageKey)
       if (cached) {
         const previous = JSON.parse(cached) as Session
@@ -81,12 +89,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refresh_token: previous.refresh_token,
         })
         if (!error) {
+          const { data: restored } = await supabase.auth.getSession()
+          if (restored.session) localStorage.setItem(storageKey, JSON.stringify(restored.session))
           localStorage.setItem('fh.active-profile', normalized)
           setProfileName(normalized)
           return { error: null }
         }
         localStorage.removeItem(storageKey)
       }
+      localStorage.setItem('fh.active-profile', normalized)
       // Remove a sessão ativa somente deste navegador; revogar no servidor
       // invalidaria a sessão guardada para a troca posterior deste perfil.
       await supabase.auth.signOut({ scope: 'local' })
@@ -95,12 +106,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       if (error || !data.session) return { error: mapAuthError(error) ?? 'Não foi possível iniciar a sessão.' }
       await supabase.auth.updateUser({ data: { display_name: normalized } })
-      localStorage.setItem(storageKey, JSON.stringify(data.session))
+      const { data: activeSession } = await supabase.auth.getSession()
+      localStorage.setItem(storageKey, JSON.stringify(activeSession.session ?? data.session))
       localStorage.setItem('fh.active-profile', normalized)
       setProfileName(normalized)
       return { error: null }
     } catch {
       return { error: 'Não foi possível selecionar esse perfil neste navegador.' }
+    } finally {
+      switchingProfile.current = false
     }
   }, [supabase])
 
@@ -124,6 +138,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     if (supabase) {
       try {
+        const { data } = await supabase.auth.getSession()
+        const active = localStorage.getItem('fh.active-profile')
+        if (data.session && active) {
+          localStorage.setItem(
+            `fh.auth.profile.${active.toLocaleLowerCase('pt-BR')}`,
+            JSON.stringify(data.session),
+          )
+        }
         await supabase.auth.signOut({ scope: 'local' })
       } catch {
         // Sessão local já removida; não há o que fazer além de seguir.

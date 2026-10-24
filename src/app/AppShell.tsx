@@ -9,6 +9,8 @@ import { ConnectionStatus } from '../ui/ConnectionStatus'
 import { pendingCount, useOutbox } from '../offline/outbox'
 import { useOnlineSync } from '../offline/useOnline'
 import { ThemeToggle } from '../preferences/ThemeToggle'
+import { Modal } from '../ui/Modal'
+import { useToast } from '../ui/ToastProvider'
 
 function useUnreadCount(): number {
   const { supabase, user } = useAuth()
@@ -42,9 +44,11 @@ function useUnreadCount(): number {
 export function AppShell() {
   const { t } = useI18n()
   const { user, signOut } = useAuth()
+  const { notify } = useToast()
   const { state } = useHousehold()
   const navigate = useNavigate()
   const [codeCopied, setCodeCopied] = useState(false)
+  const [confirmLogout, setConfirmLogout] = useState(false)
 
   const householdName = state.kind === 'ready' ? state.household.name : null
   const userName =
@@ -58,9 +62,11 @@ export function AppShell() {
     try {
       await navigator.clipboard.writeText(code)
       setCodeCopied(true)
+      notify('success', t('house.copied'), 'Envie este código ao outro perfil para entrar na mesma casa.')
       window.setTimeout(() => setCodeCopied(false), 2000)
     } catch {
       setCodeCopied(false)
+      notify('error', 'Não foi possível copiar', 'Selecione o código e copie manualmente.')
     }
   }
 
@@ -75,11 +81,8 @@ export function AppShell() {
   ] as const
 
   async function handleSignOut() {
-    if (outboxPending > 0) {
-      const confirmed = window.confirm(t('sync.logoutWarn', { n: outboxPending }))
-      if (!confirmed) return
-    }
     await signOut()
+    notify('success', t('auth.signOut'), t('auth.logoutConfirm'))
     navigate('/entrar')
   }
 
@@ -141,7 +144,7 @@ export function AppShell() {
             <span className="hidden text-xs text-muted-foreground sm:inline">
               {t('auth.signedInAs', { name: userName })}
             </span>
-            <Button size="sm" variant="secondary" onClick={handleSignOut}>
+            <Button size="sm" variant="secondary" onClick={() => setConfirmLogout(true)}>
               {t('auth.signOut')}
             </Button>
           </div>
@@ -174,6 +177,20 @@ export function AppShell() {
       <main className="w-full px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
         <Outlet />
       </main>
+      {confirmLogout && (
+        <Modal title={t('auth.signOut')} onClose={() => setConfirmLogout(false)}>
+          <p className="text-sm text-muted-foreground">{t('auth.logoutConfirm')}</p>
+          {outboxPending > 0 && (
+            <p className="mt-3 rounded-md border border-border bg-muted p-3 text-sm" role="status">
+              {t('auth.logoutPending', { n: outboxPending })}
+            </p>
+          )}
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmLogout(false)}>{t('common.cancel')}</Button>
+            <Button variant="destructive" onClick={() => { setConfirmLogout(false); void handleSignOut() }}>{t('auth.signOut')}</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

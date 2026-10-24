@@ -1,18 +1,32 @@
 import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../auth/context'
 import { useI18n } from '../../i18n'
 import { useHousehold } from '../../household/context'
 import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { ThemeToggle } from '../../preferences/ThemeToggle'
+import { useToast } from '../../ui/ToastProvider'
+import { Modal } from '../../ui/Modal'
 
 export function OnboardingPage() {
   const { t } = useI18n()
   const { createHousehold, joinHousehold } = useHousehold()
+  const { notify } = useToast()
+  const { signOut } = useAuth()
+  const navigate = useNavigate()
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [confirmSwitch, setConfirmSwitch] = useState(false)
+
+  async function switchProfile() {
+    await signOut()
+    notify('success', 'Perfil desconectado', 'Escolha um perfil para continuar.')
+    navigate('/entrar')
+  }
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault()
@@ -24,7 +38,13 @@ export function OnboardingPage() {
     setBusy(true)
     try {
       const result = await createHousehold(name)
-      if (result.error) setError(result.error)
+      if (result.error) {
+        setError(result.error)
+        notify('error', 'Não foi possível criar a casa', result.error)
+      } else {
+        setError(null)
+        notify('success', 'Casa criada', 'A casa foi confirmada no Supabase. O código de convite está no topo da tela.')
+      }
     } finally {
       setBusy(false)
     }
@@ -40,7 +60,13 @@ export function OnboardingPage() {
     setBusy(true)
     try {
       const result = await joinHousehold(code)
-      if (result.error) setError(result.error)
+      if (result.error) {
+        setError(result.error)
+        notify('error', 'Não foi possível entrar na casa', result.error)
+      } else {
+        setError(null)
+        notify('success', 'Você entrou na casa', 'Os dados compartilhados já estão disponíveis para este perfil.')
+      }
     } finally {
       setBusy(false)
     }
@@ -53,7 +79,10 @@ export function OnboardingPage() {
           <h1 className="text-xl font-semibold">{t('house.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('house.waiting')}</p>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={() => setConfirmSwitch(true)}>Trocar perfil</Button>
+          <ThemeToggle />
+        </div>
       </div>
 
       {error && (
@@ -105,6 +134,15 @@ export function OnboardingPage() {
           </form>
         </Card>
       </div>
+      {confirmSwitch && (
+        <Modal title="Trocar perfil" onClose={() => setConfirmSwitch(false)}>
+          <p className="text-sm text-muted-foreground">Sua casa e os dados salvos permanecem no Supabase. Você poderá selecionar outro perfil nesta tela.</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmSwitch(false)}>{t('common.cancel')}</Button>
+            <Button onClick={() => void switchProfile()}>{t('auth.signOut')}</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

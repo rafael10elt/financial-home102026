@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/context'
 import { useI18n } from '../../i18n'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
+import { useToast } from '../../ui/ToastProvider'
 
 export function LoginPage() {
   const { t } = useI18n()
   const { selectProfile, status } = useAuth()
+  const { notify } = useToast()
   const navigate = useNavigate()
   const profiles = (import.meta.env.VITE_PROFILES || 'Jéssica,Rafael')
     .split(',').map((name: string) => name.trim()).filter(Boolean)
@@ -17,7 +19,11 @@ export function LoginPage() {
     setBusy(true)
     try {
       const result = await selectProfile(name)
-      if (result.error) return setError(result.error)
+      if (result.error) {
+        setError(result.error)
+        notify('error', 'Não foi possível abrir este perfil', result.error)
+        return
+      }
       navigate('/', { replace: true })
     } finally {
       setBusy(false)
