@@ -24,8 +24,9 @@ import {
   TransferDialog,
 } from './FinanceDialogs'
 import { ImportWizard } from './ImportWizard'
+import { FinanceCategoriesPanel } from './FinanceCategoriesPanel'
 
-type Tab = 'summary' | 'transactions' | 'recurrences' | 'transfers' | 'goals' | 'exchange' | 'import'
+type Tab = 'summary' | 'transactions' | 'categories' | 'recurrences' | 'transfers' | 'goals' | 'exchange' | 'import'
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
@@ -258,6 +259,7 @@ export function FinancePage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'summary', label: t('fin.tabs.summary') },
     { id: 'transactions', label: t('fin.tabs.transactions') },
+    { id: 'categories', label: t('fin.tabs.categories') },
     { id: 'recurrences', label: t('fin.tabs.recurrences') },
     { id: 'transfers', label: t('fin.tabs.transfers') },
     { id: 'goals', label: t('fin.tabs.goals') },
@@ -340,7 +342,7 @@ export function FinancePage() {
             </Card>
           ) : (
             consolidation.data && (
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <SummaryCard label={t('fin.summary.income')} total={consolidation.data.incomeRealized} />
                 <SummaryCard label={t('fin.summary.expense')} total={consolidation.data.expenseRealized} />
                 <SummaryCard label={t('fin.summary.balance')} total={consolidation.data.balance} strong />
@@ -397,7 +399,7 @@ export function FinancePage() {
                   ]
                   const balance = accountBalance(toMinorUnits(account.opening_balance, account.currency), movements)
                   return (
-                    <li key={account.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                    <li key={account.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex flex-col">
                         <span className="font-medium">
                           {account.name} <span className="text-xs text-muted-foreground">({account.currency})</span>
@@ -406,7 +408,7 @@ export function FinancePage() {
                           {t(`fin.accountType.${account.type}`)} · {memberName(account.owner_id)}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <div className="text-right">
                           <div className="font-semibold tabular-nums">
                             {formatMoney(balance.current, account.currency)}
@@ -454,6 +456,27 @@ export function FinancePage() {
         </div>
       )}
 
+      {finance.status === 'ready' && tab === 'categories' && (
+        <FinanceCategoriesPanel
+          categories={finance.categories.filter((category) => category.household_id === finance.householdId)}
+          merchants={finance.merchants}
+          saveCategory={async (id, name, kind) => {
+            const result = id
+              ? await finance.update('categories_fh', id, { name, kind }, 'categories_fh')
+              : await finance.insert('categories_fh', { domain: 'finance', name, kind, color: '#2563eb' })
+            return result.error ?? null
+          }}
+          removeCategory={async (id) => (await finance.remove('categories_fh', id, 'categories_fh')).error ?? null}
+          saveMerchant={async (id, categoryId, name) => {
+            const result = id
+              ? await finance.update('financial_merchants_fh', id, { category_id: categoryId, name }, 'financial_merchants_fh')
+              : await finance.insert('financial_merchants_fh', { category_id: categoryId, name })
+            return result.error ?? null
+          }}
+          removeMerchant={async (id) => (await finance.remove('financial_merchants_fh', id, 'financial_merchants_fh')).error ?? null}
+        />
+      )}
+
       {finance.status === 'ready' && tab === 'transactions' && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2">
@@ -492,16 +515,17 @@ export function FinancePage() {
                   const overdue = (tx.status === 'previsto' || tx.status === 'pendente') && tx.date < todayKey()
                   const shownStatus = overdue ? 'vencido' : tx.status
                   return (
-                    <li key={tx.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                      <div className="flex flex-col">
+                    <li key={tx.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex flex-col">
                         <span className="font-medium">{tx.description}</span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="break-words text-xs text-muted-foreground">
                           {tx.date} · {t(`fin.status.${shownStatus}`)} · {accountName(tx.account_id)} ·{' '}
                           {categoryName(tx.category_id)} · {memberName(tx.owner_id)}
+                          {tx.merchant_id ? ` · ${finance.merchants.find((merchant) => merchant.id === tx.merchant_id)?.name ?? ''}` : ''}
                           {tx.installment_total ? ` · ${tx.installment_number}/${tx.installment_total}` : ''}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className={`font-semibold tabular-nums ${tx.kind === 'income' ? 'text-green-700 dark:text-green-400' : ''}`}>
                           {tx.kind === 'income' ? '+' : '−'}
                           {formatMoney(toMinorUnits(tx.amount, tx.currency), tx.currency)}
@@ -559,7 +583,7 @@ export function FinancePage() {
             ) : (
               <ul className="flex flex-col divide-y divide-[var(--border)]">
                 {finance.recurrences.map((recurrence) => (
-                  <li key={recurrence.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                  <li key={recurrence.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex flex-col">
                       <span className="font-medium">{recurrence.description}</span>
                       <span className="text-xs text-muted-foreground">
@@ -569,7 +593,7 @@ export function FinancePage() {
                         {recurrence.active ? t('fin.active') : t('fin.inactive')}
                       </span>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap gap-1">
                       <Button
                         size="sm"
                         variant="secondary"
@@ -616,7 +640,7 @@ export function FinancePage() {
             ) : (
               <ul className="flex flex-col divide-y divide-[var(--border)]">
                 {finance.transfers.map((transfer) => (
-                  <li key={transfer.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                  <li key={transfer.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex flex-col">
                       <span className="font-medium">
                         {accountName(transfer.from_account)} → {accountName(transfer.to_account)}
@@ -731,7 +755,7 @@ export function FinancePage() {
             ) : (
               <ul className="flex flex-col divide-y divide-[var(--border)]">
                 {finance.operations.map((operation) => (
-                  <li key={operation.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                  <li key={operation.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex flex-col">
                       <span className="font-medium">
                         {formatMoney(toMinorUnits(operation.from_amount, operation.from_currency), operation.from_currency)}
@@ -789,6 +813,7 @@ export function FinancePage() {
           initial={dialog.editing}
           accounts={finance.accounts}
           categories={finance.categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
+          merchants={finance.merchants}
           members={members}
           defaultKind={dialog.kind}
           busy={busy}

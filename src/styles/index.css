@@ -61,6 +61,9 @@
 }
 
 body {
+  min-width: 320px;
+  max-width: 100%;
+  overflow-x: clip;
   margin: 0;
   background-color: var(--background);
   color: var(--foreground);

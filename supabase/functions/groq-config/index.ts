@@ -7,15 +7,22 @@ import { decryptText, encryptText } from '../_shared/crypto.ts'
 import { HttpError, jsonResponse, requireUser, serviceClient } from '../_shared/auth.ts'
 
 type Action = 'status' | 'set' | 'test' | 'remove'
+const DEFAULT_MODEL = 'openai/gpt-oss-20b'
+const SUPPORTED_CHAT_MODELS = new Set([
+  'openai/gpt-oss-20b',
+  'openai/gpt-oss-120b',
+  'qwen/qwen3.8-27b',
+])
 
 type SetBody = {
   action: 'set'
-  key: string
+  key?: string
   model?: string
 }
 
 type OtherBody = {
   action: Exclude<Action, 'set'>
+  model?: string
 }
 
 async function assertOwner(userId: string): Promise<void> {
@@ -47,13 +54,32 @@ function mapGroqError(status: number): string {
 
 async function testKey(key: string, model: string): Promise<{ ok: boolean; code?: string }> {
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/models', {
-      headers: { Authorization: `Bearer ${key}` },
+    if (!SUPPORTED_CHAT_MODELS.has(model)) return { ok: false, code: 'MODEL_NOT_SUPPORTED' }
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'Responda apenas: OK' }],
+        max_completion_tokens: 8,
+        tools: [{
+          type: 'function',
+          function: {
+            name: 'smoke_test',
+            description: 'Verificação de suporte a ferramentas.',
+            parameters: { type: 'object', properties: {} },
+          },
+        }],
+        tool_choice: 'auto',
+      }),
     })
-    if (!response.ok) return { ok: false, code: mapGroqError(response.status) }
-    const payload = (await response.json()) as { data?: { id: string }[] }
-    const models = new Set((payload.data ?? []).map((m) => m.id))
-    if (!models.has(model)) return { ok: false, code: 'MODEL_NOT_SUPPORTED' }
+    if (!response.ok) {
+      const body = await response.text()
+      if (response.status === 400 || response.status === 404) {
+        return { ok: false, code: /model|decommission|not found/i.test(body) ? 'MODEL_NOT_SUPPORTED' : 'GROQ_ERROR' }
+      }
+      return { ok: false, code: mapGroqError(response.status) }
+    }
     return { ok: true }
   } catch {
     return { ok: false, code: 'GROQ_UNAVAILABLE' }
@@ -84,40 +110,52 @@ serve(async (request: Request): Promise<Response> => {
       return jsonResponse({
         configured: Boolean(row?.encrypted_key || environmentKey),
         key_last4: row?.encrypted_key ? row.key_last4 : environmentKey ? environmentKey.slice(-4) : null,
-        model: row?.model ?? 'llama-3.3-70b-versatile',
+        model: row?.model ?? DEFAULT_MODEL,
       })
     }
 
     if (action === 'set') {
-      const key = (body as SetBody).key?.trim() ?? ''
-      const model = (body as SetBody).model?.trim() || 'llama-3.3-70b-versatile'
-      if (!key.startsWith('gsk_') || key.length < 20) {
+      const suppliedKey = (body as SetBody).key?.trim() ?? ''
+      const model = (body as SetBody).model?.trim() || DEFAULT_MODEL
+      if (suppliedKey && (!suppliedKey.startsWith('gsk_') || suppliedKey.length < 20)) {
         return jsonResponse({ error: 'INVALID_KEY_FORMAT' }, 400)
       }
-      // Valida a chave ANTES de persistir: nunca guardamos chave inválida.
+      const { data: currentConfig } = await service
+        .from('ai_config_fh')
+        .select('encrypted_key,key_last4')
+        .eq('config_id', 'global')
+        .maybeSingle()
+      const current = currentConfig as { encrypted_key: string | null; key_last4: string | null } | null
+      const key = suppliedKey || (current?.encrypted_key ? await decryptText(current.encrypted_key) : Deno.env.get('GROQ_API_KEY')?.trim() ?? '')
+      if (!key) return jsonResponse({ error: 'NO_KEY' }, 400)
+      // Faz uma chamada real de chat; listar modelos não garante acesso de inferência.
       const probe = await testKey(key, model)
       if (!probe.ok) return jsonResponse({ error: probe.code ?? 'GROQ_ERROR' }, 400)
-      let encrypted: string
-      try {
-        encrypted = await encryptText(key)
-      } catch (error) {
-        if (error instanceof Error && error.message.startsWith('GROQ_ENC_KEY')) {
-          throw new HttpError(503, 'ENCRYPTION_KEY_NOT_CONFIGURED')
+      let encrypted = current?.encrypted_key ?? null
+      let keyLast4 = current?.key_last4 ?? null
+      if (suppliedKey) {
+        try {
+          encrypted = await encryptText(key)
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith('GROQ_ENC_KEY')) {
+            throw new HttpError(503, 'ENCRYPTION_KEY_NOT_CONFIGURED')
+          }
+          throw error
         }
-        throw error
+        keyLast4 = key.slice(-4)
       }
       const { error } = await service.from('ai_config_fh').upsert(
         {
           config_id: 'global',
           provider: 'groq',
           encrypted_key: encrypted,
-          key_last4: key.slice(-4),
+          key_last4: keyLast4,
           model,
         },
         { onConflict: 'config_id' },
       )
       if (error) throw new HttpError(500, 'DB_ERROR')
-      return jsonResponse({ configured: true, key_last4: key.slice(-4), model })
+      return jsonResponse({ configured: true, key_last4: keyLast4, model })
     }
 
     if (action === 'test') {
@@ -131,7 +169,7 @@ serve(async (request: Request): Promise<Response> => {
         ? await decryptText(row.encrypted_key)
         : Deno.env.get('GROQ_API_KEY')?.trim()
       if (!key) return jsonResponse({ error: 'NO_KEY' }, 400)
-      const model = row?.model ?? 'llama-3.3-70b-versatile'
+      const model = (body as OtherBody).model?.trim() || row?.model || DEFAULT_MODEL
       const probe = await testKey(key, model)
       if (!probe.ok) return jsonResponse({ error: probe.code ?? 'GROQ_ERROR' }, 400)
       return jsonResponse({ ok: true, model })

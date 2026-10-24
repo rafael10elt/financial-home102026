@@ -27,6 +27,7 @@ export type Transaction = {
   status: 'previsto' | 'pendente' | 'pago' | 'recebido' | 'cancelado'
   description: string
   category_id: string | null
+  merchant_id: string | null
   date: string
   paid_at: string | null
   owner_id: string | null
@@ -124,6 +125,14 @@ export type FinanceCategory = {
   color: string | null
 }
 
+export type FinanceMerchant = {
+  id: string
+  household_id: string
+  category_id: string
+  name: string
+  created_by: string | null
+}
+
 const FINANCE_DEFAULTS: { name: string; kind: string; color: string }[] = [
   { name: 'Salário — Jess', kind: 'income', color: '#047857' },
   { name: 'Salário — Rafa', kind: 'income', color: '#047857' },
@@ -142,10 +151,18 @@ async function ensureFinanceCategories(
   householdId: string,
   userId: string,
 ): Promise<void> {
+  const { data: existing } = await supabase
+    .from('categories_fh')
+    .select('id')
+    .eq('household_id', householdId)
+    .eq('domain', 'finance')
+    .limit(1)
+  // Only seed a brand-new household. Do not silently recreate categories the
+  // user chose to delete on every page load.
+  if ((existing ?? []).length > 0) return
   for (const category of FINANCE_DEFAULTS) {
-    await supabase.from('categories_fh').upsert(
+    await supabase.from('categories_fh').insert(
       { ...category, domain: 'finance', household_id: householdId, created_by: userId },
-      { onConflict: 'household_id,domain,name', ignoreDuplicates: true },
     )
   }
 }
@@ -175,6 +192,7 @@ export function useFinanceData() {
   const [rates, setRates] = useState<Rate[]>([])
   const [operations, setOperations] = useState<Operation[]>([])
   const [categories, setCategories] = useState<FinanceCategory[]>([])
+  const [merchants, setMerchants] = useState<FinanceMerchant[]>([])
   const [reloadToken, setReloadToken] = useState(0)
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), [])
@@ -199,7 +217,7 @@ export function useFinanceData() {
     ) {
       try {
         await ensureFinanceCategories(client, household, userId)
-        const [accs, txs, recs, trfs, gls, conts, rts, ops, cats] = await Promise.all([
+        const [accs, txs, recs, trfs, gls, conts, rts, ops, cats, stores] = await Promise.all([
           client.from('financial_accounts_fh').select('*').eq('household_id', household).order('name').limit(100),
           client
             .from('financial_transactions_fh')
@@ -234,10 +252,11 @@ export function useFinanceData() {
             .eq('domain', 'finance')
             .or(`household_id.is.null,household_id.eq.${household}`)
             .order('name'),
+          client.from('financial_merchants_fh').select('*').eq('household_id', household).order('name'),
         ])
         if (cancelled) return
         const firstError =
-          accs.error ?? txs.error ?? recs.error ?? trfs.error ?? gls.error ?? conts.error ?? rts.error ?? ops.error ?? cats.error
+          accs.error ?? txs.error ?? recs.error ?? trfs.error ?? gls.error ?? conts.error ?? rts.error ?? ops.error ?? cats.error ?? stores.error
         if (firstError) {
           setError(firstError.message)
           setStatus('error')
@@ -252,6 +271,7 @@ export function useFinanceData() {
         setRates((rts.data ?? []) as Rate[])
         setOperations((ops.data ?? []) as Operation[])
         setCategories((cats.data ?? []) as FinanceCategory[])
+        setMerchants((stores.data ?? []) as FinanceMerchant[])
         setStatus('ready')
       } catch (unknownError) {
         if (!cancelled) {
@@ -401,6 +421,7 @@ export function useFinanceData() {
     rates,
     operations,
     categories,
+    merchants,
     householdId,
     reload,
     insert,

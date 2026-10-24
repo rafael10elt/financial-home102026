@@ -12,6 +12,13 @@ type KeyState =
   | { checked: false }
   | { checked: true; configured: boolean; key_last4: string | null; model: string }
 
+const GROQ_MODELS = [
+  { id: 'openai/gpt-oss-20b', label: 'ai.modelOption.oss20' },
+  { id: 'openai/gpt-oss-120b', label: 'ai.modelOption.oss120' },
+  { id: 'qwen/qwen3.8-27b', label: 'ai.modelOption.qwen38' },
+] as const
+const DEFAULT_MODEL = GROQ_MODELS[0].id
+
 async function callConfig(
   profileId: string,
   body: unknown,
@@ -66,7 +73,7 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
 
   const [state, setState] = useState<KeyState>({ checked: false })
   const [key, setKey] = useState('')
-  const [model, setModel] = useState('llama-3.3-70b-versatile')
+  const [model, setModel] = useState<string>(DEFAULT_MODEL)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [messageError, setMessageError] = useState(false)
@@ -83,9 +90,11 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
         checked: true,
         configured: Boolean(data?.configured),
         key_last4: (data?.key_last4 as string | null) ?? null,
-        model: (data?.model as string | undefined) ?? 'llama-3.3-70b-versatile',
+        model: (data?.model as string | undefined) ?? DEFAULT_MODEL,
       })
-      if (typeof data?.model === 'string') setModel(data.model)
+      if (typeof data?.model === 'string') {
+        setModel(GROQ_MODELS.some((option) => option.id === data.model) ? data.model : DEFAULT_MODEL)
+      }
     } catch (error) {
       setState({ checked: true, configured: false, key_last4: null, model: '' })
       const detail = configErrorMessage(error instanceof Error ? error.message : 'BACKEND_UNAVAILABLE', t('ai.backendMissing'))
@@ -108,12 +117,13 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
 
   async function save() {
     if (!supabase || !householdId) return
+    const replacingKey = Boolean(key.trim())
     setBusy(true)
     setMessage(null)
     try {
       const { data, status } = await callConfig(user?.id ?? '', {
         action: 'set',
-        key: key.trim(),
+        key: key.trim() || undefined,
         model: model.trim() || undefined,
       })
       if (status !== 200 || !data || data.error) {
@@ -121,13 +131,13 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
         const detail = configErrorMessage(code, mapError(code))
         setMessage(detail)
         setMessageError(true)
-        notify('error', 'Não foi possível salvar a chave Groq', detail)
+        notify('error', replacingKey ? 'Não foi possível salvar a chave Groq' : 'Não foi possível atualizar o modelo', detail)
         return
       }
       setKey('')
-      setMessage(t('ai.keySaved'))
+      setMessage(replacingKey ? t('ai.keySaved') : t('ai.keyModelSaved'))
       setMessageError(false)
-      notify('success', 'Chave Groq validada e salva', `Modelo: ${model.trim() || 'llama-3.3-70b-versatile'}`)
+      notify('success', replacingKey ? t('ai.keySaved') : t('ai.keyModelSaved'), `Modelo: ${model}`)
       await refresh()
       onChanged()
     } catch {
@@ -164,7 +174,7 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     setBusy(true)
     setMessage(null)
     try {
-      const { data, status } = await callConfig(user?.id ?? '', { action: 'test' })
+      const { data, status } = await callConfig(user?.id ?? '', { action: 'test', model })
       if (status === 200 && data && !data.error) {
         setMessage(t('ai.keyTestOk', { model: String(data.model ?? model) }))
         setMessageError(false)
@@ -240,12 +250,12 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
 
           <Field label={t('ai.model')}>
             {(aria) => (
-              <Input
-                {...aria}
-                value={model}
-                spellCheck={false}
-                onChange={(e) => setModel(e.target.value)}
-              />
+              <select {...aria} value={model} onChange={(e) => setModel(e.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm text-foreground">
+                {GROQ_MODELS.map((option) => (
+                  <option key={option.id} value={option.id}>{t(option.label)}</option>
+                ))}
+              </select>
             )}
           </Field>
 
@@ -256,8 +266,8 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => void save()} disabled={busy || !key.trim()}>
-              {t('ai.keySave')}
+            <Button size="sm" onClick={() => void save()} disabled={busy || (!key.trim() && (!configured || model === state.model))}>
+              {key.trim() ? t('ai.keySave') : t('ai.keySaveModel')}
             </Button>
             <Button size="sm" variant="secondary" onClick={() => void test()} disabled={busy || !configured}>
               {t('ai.keyTest')}

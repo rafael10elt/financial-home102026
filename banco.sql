@@ -53,6 +53,7 @@
 -- FH-SQL-007 | Diagnostico | 2026-10-24 | Verificacao somente leitura de casas e membros  [preparado]
 -- FH-SQL-008 | Identidade local | 2026-10-24 | Perfis Jéssica/Rafael e RLS por x-profile-id  [incluido no FH-SQL-001]
 -- FH-SQL-009 | IA | 2026-10-24 | Chave Groq única e global, compartilhada por todos os perfis [preparado]
+-- FH-SQL-010 | Finanças | 2026-10-24 | Estabelecimentos por categoria e vínculo nos lançamentos [preparado]
 -- =====================================================================
 
 
@@ -1065,7 +1066,7 @@ select relname, relrowsecurity
 select count(*) as total_policies from pg_policies
  where schemaname = 'public';
 
--- Permissoes de API para app sem Supabase Auth. RLS continua ativa nas 40
+-- Permissoes de API para app sem Supabase Auth. RLS continua ativa nas 41
 -- tabelas *_fh e as policies validam x-profile-id; o header e spoofavel.
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on all tables in schema public to anon, authenticated;
@@ -1185,6 +1186,20 @@ create table if not exists public.financial_accounts_fh (
 create index if not exists financial_accounts_fh_household_idx
   on public.financial_accounts_fh (household_id);
 
+-- Estabelecimentos/subcategorias ligados a uma categoria financeira.
+create table if not exists public.financial_merchants_fh (
+  id           uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households_fh (id) on delete cascade,
+  category_id  uuid not null references public.categories_fh (id) on delete cascade,
+  name         text not null check (char_length(btrim(name)) between 1 and 80),
+  created_by   uuid,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (household_id, category_id, name)
+);
+create index if not exists financial_merchants_fh_category_idx
+  on public.financial_merchants_fh (household_id, category_id, name);
+
 -- ---------------------------------------------------------------------
 -- 2. Lancamentos (receitas e despesas)
 -- ---------------------------------------------------------------------
@@ -1199,6 +1214,7 @@ create table if not exists public.financial_transactions_fh (
                       check (status in ('previsto', 'pendente', 'pago', 'recebido', 'cancelado')),
   description         text not null check (char_length(btrim(description)) between 1 and 200),
   category_id         uuid references public.categories_fh (id) on delete set null,
+  merchant_id         uuid references public.financial_merchants_fh (id) on delete set null,
   date                date not null,
   paid_at             timestamptz,
   owner_id            uuid references public.profiles_fh (id) on delete set null,
@@ -1450,6 +1466,11 @@ create trigger t_financial_accounts_fh_updated
   before update on public.financial_accounts_fh
   for each row execute function public.set_updated_at_fh();
 
+drop trigger if exists t_financial_merchants_fh_updated on public.financial_merchants_fh;
+create trigger t_financial_merchants_fh_updated
+  before update on public.financial_merchants_fh
+  for each row execute function public.set_updated_at_fh();
+
 drop trigger if exists t_financial_transactions_fh_updated on public.financial_transactions_fh;
 create trigger t_financial_transactions_fh_updated
   before update on public.financial_transactions_fh
@@ -1484,6 +1505,8 @@ create trigger t_financial_imports_fh_updated
 -- 10. Row Level Security
 -- ---------------------------------------------------------------------
 alter table public.financial_accounts_fh enable row level security;
+alter table public.financial_merchants_fh enable row level security;
+grant select, insert, update, delete on public.financial_merchants_fh to anon, authenticated;
 alter table public.financial_transactions_fh enable row level security;
 alter table public.financial_recurrences_fh enable row level security;
 alter table public.financial_transfers_fh enable row level security;
@@ -1494,6 +1517,30 @@ alter table public.goal_contributions_fh enable row level security;
 alter table public.financial_imports_fh enable row level security;
 alter table public.financial_import_rows_fh enable row level security;
 alter table public.audit_logs_fh enable row level security;
+
+drop policy if exists financial_merchants_fh_select on public.financial_merchants_fh;
+create policy financial_merchants_fh_select on public.financial_merchants_fh
+  for select to anon, authenticated
+  using (public.is_household_member_fh(household_id));
+drop policy if exists financial_merchants_fh_insert on public.financial_merchants_fh;
+create policy financial_merchants_fh_insert on public.financial_merchants_fh
+  for insert to anon, authenticated
+  with check (public.is_household_member_fh(household_id)
+    and exists (select 1 from public.categories_fh c
+      where c.id = financial_merchants_fh.category_id
+        and c.household_id = financial_merchants_fh.household_id and c.domain = 'finance'));
+drop policy if exists financial_merchants_fh_update on public.financial_merchants_fh;
+create policy financial_merchants_fh_update on public.financial_merchants_fh
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
+  with check (public.is_household_member_fh(household_id)
+    and exists (select 1 from public.categories_fh c
+      where c.id = financial_merchants_fh.category_id
+        and c.household_id = financial_merchants_fh.household_id and c.domain = 'finance'));
+drop policy if exists financial_merchants_fh_delete on public.financial_merchants_fh;
+create policy financial_merchants_fh_delete on public.financial_merchants_fh
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 -- Contas, lancamentos, recorrencias, transferencias, operacoes e metas:
 -- leitura respeita visibilidade pessoal; escrita pelo criador, responsavel
@@ -2279,7 +2326,7 @@ create table if not exists public.ai_config_fh (
   provider      text not null default 'groq',
   encrypted_key text,
   key_last4     char(4),
-  model         text not null default 'llama-3.3-70b-versatile',
+  model         text not null default 'openai/gpt-oss-20b',
   updated_at    timestamptz not null default now()
 );
 
@@ -2574,7 +2621,7 @@ select policyname from pg_policies
  where schemaname = 'public' and tablename = 'push_subscriptions_fh'
  order by policyname;
 
--- 3) Totais gerais (esperado: 40 tabelas *_fh, 134 policies em public):
+-- 3) Totais gerais (esperado: 41 tabelas *_fh, 138 policies em public):
 select count(*) from information_schema.tables
  where table_schema = 'public' and table_name like '%_fh';
 
@@ -2643,3 +2690,69 @@ select config_id, provider, key_last4, model, updated_at
 from public.ai_config_fh;
 select count(*) as total_policies from pg_policies
  where schemaname = 'public';
+
+-- =====================================================================
+-- FH-SQL-010 — Gerenciamento de categorias e estabelecimentos financeiros
+-- Data: 2026-10-24
+-- Efeito: cria estabelecimentos (ex.: Mercado → Tesco) e permite associá-los
+--   a lançamentos sem alterar os registros antigos.
+-- Aplicar em banco existente; em banco limpo o esquema acima já inclui tudo.
+-- =====================================================================
+begin;
+
+create table if not exists public.financial_merchants_fh (
+  id           uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households_fh (id) on delete cascade,
+  category_id  uuid not null references public.categories_fh (id) on delete cascade,
+  name         text not null check (char_length(btrim(name)) between 1 and 80),
+  created_by   uuid,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (household_id, category_id, name)
+);
+create index if not exists financial_merchants_fh_category_idx
+  on public.financial_merchants_fh (household_id, category_id, name);
+
+alter table public.financial_transactions_fh
+  add column if not exists merchant_id uuid
+    references public.financial_merchants_fh (id) on delete set null;
+
+alter table public.financial_merchants_fh enable row level security;
+grant select, insert, update, delete on public.financial_merchants_fh to anon, authenticated;
+drop policy if exists financial_merchants_fh_select on public.financial_merchants_fh;
+create policy financial_merchants_fh_select on public.financial_merchants_fh
+  for select to anon, authenticated
+  using (public.is_household_member_fh(household_id));
+drop policy if exists financial_merchants_fh_insert on public.financial_merchants_fh;
+create policy financial_merchants_fh_insert on public.financial_merchants_fh
+  for insert to anon, authenticated
+  with check (public.is_household_member_fh(household_id)
+    and exists (select 1 from public.categories_fh c
+      where c.id = financial_merchants_fh.category_id
+        and c.household_id = financial_merchants_fh.household_id and c.domain = 'finance'));
+drop policy if exists financial_merchants_fh_update on public.financial_merchants_fh;
+create policy financial_merchants_fh_update on public.financial_merchants_fh
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
+  with check (public.is_household_member_fh(household_id)
+    and exists (select 1 from public.categories_fh c
+      where c.id = financial_merchants_fh.category_id
+        and c.household_id = financial_merchants_fh.household_id and c.domain = 'finance'));
+drop policy if exists financial_merchants_fh_delete on public.financial_merchants_fh;
+create policy financial_merchants_fh_delete on public.financial_merchants_fh
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
+
+drop trigger if exists t_financial_merchants_fh_updated on public.financial_merchants_fh;
+create trigger t_financial_merchants_fh_updated
+  before update on public.financial_merchants_fh
+  for each row execute function public.set_updated_at_fh();
+
+commit;
+
+-- Validacao FH-SQL-010: esperado merchant_id na tabela de lancamentos e RLS ativa.
+select column_name from information_schema.columns
+ where table_schema = 'public' and table_name = 'financial_transactions_fh'
+   and column_name = 'merchant_id';
+select relname, relrowsecurity from pg_class
+ where relnamespace = 'public'::regnamespace and relname = 'financial_merchants_fh';

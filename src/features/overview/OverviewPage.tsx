@@ -13,6 +13,8 @@ import { Card, CardTitle } from '../../ui/Card'
 import { PhasePlaceholder } from '../../ui/PhasePlaceholder'
 import { ClocksWidget } from '../../ui/ClocksWidget'
 import { WeatherWidget } from '../../ui/WeatherWidget'
+import { TransactionDialog } from '../finance/FinanceDialogs'
+import { useToast } from '../../ui/ToastProvider'
 
 const DEFAULT_WIDGETS = [
   'clocks',
@@ -57,9 +59,13 @@ export function OverviewPage() {
   const { supabase, user } = useAuth()
   const { state } = useHousehold()
   const agenda = useAgendaData()
+  const finance = useFinanceData()
+  const { notify } = useToast()
 
   const [widgets, setWidgets] = useState<WidgetId[]>(() => loadLocalLayout())
   const [editingLayout, setEditingLayout] = useState(false)
+  const [quickExpense, setQuickExpense] = useState(false)
+  const [savingQuickExpense, setSavingQuickExpense] = useState(false)
 
   // Hidrata o layout da conta (nuvem vence apenas na primeira carga).
   useEffect(() => {
@@ -261,6 +267,52 @@ export function OverviewPage() {
           {renderWidget(id)}
         </section>
       ))}
+
+      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2 pb-[env(safe-area-inset-bottom)]">
+        <Button size="md" variant="secondary" className="h-12 rounded-full px-5 shadow-lg" onClick={() => void navigate('/assistente')}>
+          <span aria-hidden="true">✦</span><span>{t('overview.quickAssistant')}</span>
+        </Button>
+        <Button
+          size="md"
+          className="h-12 rounded-full px-5 shadow-lg"
+          disabled={finance.status === 'loading'}
+          onClick={() => {
+            if (!finance.accounts.length) {
+              notify('info', t('overview.quickExpenseNeedsAccount'), t('overview.quickExpenseNeedsAccountDetail'))
+              void navigate('/financas')
+              return
+            }
+            setQuickExpense(true)
+          }}
+        >
+          <span aria-hidden="true">＋</span><span>{t('overview.quickExpense')}</span>
+        </Button>
+      </div>
+
+      {quickExpense && finance.status === 'ready' && (
+        <TransactionDialog
+          initial={null}
+          accounts={finance.accounts}
+          categories={finance.categories.map((category) => ({ id: category.id, name: category.name, kind: category.kind }))}
+          merchants={finance.merchants}
+          members={state.kind === 'ready' ? state.members.map((member) => ({ user_id: member.user_id, display_name: member.display_name })) : []}
+          defaultKind="expense"
+          busy={savingQuickExpense}
+          error={null}
+          onClose={() => setQuickExpense(false)}
+          onSave={async (values) => {
+            setSavingQuickExpense(true)
+            const result = await finance.insert('financial_transactions_fh', values)
+            setSavingQuickExpense(false)
+            if (result.error) {
+              notify('error', t('overview.quickExpenseFailed'), result.error)
+              return
+            }
+            setQuickExpense(false)
+            notify('success', t('overview.quickExpenseSaved'))
+          }}
+        />
+      )}
     </div>
   )
 }

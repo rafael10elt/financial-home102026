@@ -1368,3 +1368,29 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
   chunk inicial maior que 500 kB. Nenhuma suíte de testes foi executada.
 - Próxima etapa no mapa: Fase 7, revalidação final assistida e comprovação
   manual das integrações, depois de aplicar FH-SQL-009 e publicar as funções.
+
+## Rodada 022 — Modelos Groq, categorias e atalhos móveis
+
+**Data:** 2026-10-24
+
+- Captura recebida mostra que o campo aceitava um ID inexistente/indisponível
+  (`meta-llama/llama-4-scout-17b-16e-instruct`). O modelo agora é selecionado
+  entre opções atuais com suporte a ferramentas; o backend faz chamada real de
+  chat + ferramenta para validar e permite atualizar só o modelo usando a chave
+  criptografada já salva. Também trocado `max_tokens` pelo parâmetro atual
+  `max_completion_tokens` no chat.
+- `FinanceCategoryPanel`: nova aba Finanças → Categorias para criar, editar e
+  remover categorias e estabelecimentos ligados (ex.: Mercado → Tesco). As
+  ações usam modais de confirmação e toasts; os padrões só são criados quando
+  a casa ainda não tem categorias, para respeitar exclusões feitas pelo usuário.
+- `financial_merchants_fh` e `financial_transactions_fh.merchant_id`: esquema,
+  RLS e migração idempotente **FH-SQL-010** adicionados a `banco.sql`. Lançamentos
+  existentes continuam válidos e sem estabelecimento.
+- Visão Geral ganhou botões flutuantes para despesa rápida e chat da IA. O
+  lançamento usa o mesmo diálogo de Finanças, com estado pendente por padrão.
+- Navegação mobile agora quebra em linhas em vez de rolar horizontalmente;
+  cartões financeiros e itens de listas refluem em telas estreitas, e o viewport
+  corta overflow horizontal acidental.
+- Próxima ação no Supabase: se o banco já existe, rodar somente FH-SQL-010 e
+  publicar novamente `groq-config` e `groq-chat`. Nenhuma alteração remota foi
+  aplicada nesta rodada.

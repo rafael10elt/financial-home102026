@@ -108,7 +108,7 @@ export function AppShell() {
             )}
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:gap-2">
             <ConnectionStatus />
             <ThemeToggle />
             {syncing ? (
@@ -150,8 +150,8 @@ export function AppShell() {
           </div>
         </div>
 
-        <nav className="w-full overflow-x-auto px-4 pb-2">
-          <ul className="flex gap-1">
+        <nav className="w-full px-3 pb-2 sm:px-4">
+          <ul className="flex flex-wrap gap-1">
             {items.map((item) => (
               <li key={item.to}>
                 <NavLink

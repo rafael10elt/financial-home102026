@@ -4,7 +4,7 @@ import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
 import { Modal } from '../../ui/Modal'
 import { inputClass, parseAmountInput, type Category, type Member } from './financeForm'
-import type { Account, Goal, Transaction } from '../../finance/useFinance'
+import type { Account, FinanceMerchant, Goal, Transaction } from '../../finance/useFinance'
 
 export type { Category, Member }
 
@@ -211,6 +211,7 @@ export function TransactionDialog({
   initial,
   accounts,
   categories,
+  merchants,
   members,
   defaultKind,
   busy,
@@ -221,6 +222,7 @@ export function TransactionDialog({
   initial: Transaction | null
   accounts: Account[]
   categories: Category[]
+  merchants: FinanceMerchant[]
   members: Member[]
   defaultKind: 'income' | 'expense'
   busy: boolean
@@ -235,6 +237,7 @@ export function TransactionDialog({
   const [status, setStatus] = useState<(typeof TX_STATUSES)[number]>(initial?.status ?? 'pendente')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [categoryId, setCategoryId] = useState(initial?.category_id ?? '')
+  const [merchantId, setMerchantId] = useState(initial?.merchant_id ?? '')
   const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10))
   const [accountId, setAccountId] = useState(initial?.account_id ?? accounts[0]?.id ?? '')
   const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '')
@@ -255,6 +258,7 @@ export function TransactionDialog({
       status,
       description: description.trim(),
       category_id: categoryId || null,
+      merchant_id: merchantId || null,
       date,
       paid_at: paid ? (initial?.paid_at ?? new Date().toISOString()) : null,
       account_id: accountId,
@@ -326,9 +330,21 @@ export function TransactionDialog({
         </Field>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <CategorySelect categories={categories} value={categoryId} kind={kind} onChange={setCategoryId} />
+        <CategorySelect categories={categories} value={categoryId} kind={kind} onChange={(value) => { setCategoryId(value); setMerchantId('') }} />
         <PersonSelect label={t('fin.owner')} value={ownerId} members={members} onChange={setOwnerId} />
       </div>
+      {categoryId && (
+        <Field label={t('fin.merchants.name')}>
+          {(aria) => (
+            <select {...aria} value={merchantId} onChange={(e) => setMerchantId(e.target.value)} className={inputClass}>
+              <option value="">{t('fin.merchants.none')}</option>
+              {merchants.filter((merchant) => merchant.category_id === categoryId).map((merchant) => (
+                <option key={merchant.id} value={merchant.id}>{merchant.name}</option>
+              ))}
+            </select>
+          )}
+        </Field>
+      )}
     </Shell>
   )
 }

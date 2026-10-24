@@ -36,7 +36,7 @@ export function ConnectionStatus() {
         aria-hidden="true"
         className={online ? 'size-2 rounded-full bg-green-500' : 'size-2 rounded-full bg-destructive'}
       />
-      {online ? t('connection.online') : t('connection.offline')}
+      <span className="hidden sm:inline">{online ? t('connection.online') : t('connection.offline')}</span>
     </span>
   )
 }

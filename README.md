@@ -148,3 +148,14 @@ O app funciona sem o n8n. Para conectar:
 - Objetos de banco personalizados terminam em `_fh`.
 - Recorrências financeiras sempre nascem **pendentes** e são idempotentes.
 - Dados pessoais são protegidos por RLS, não apenas ocultos na interface.
+
+## Fluxos recentes
+
+- O campo de modelo em Configurações → IA é uma lista de modelos Groq
+  compatíveis com ferramentas. Para substituir somente o modelo já salvo,
+  escolha uma opção e use **Salvar modelo**; o backend usa a chave criptografada
+  e faz uma chamada de chat com ferramenta antes de gravar a alteração.
+- Em Finanças → Categorias, gerencie categorias da casa e os estabelecimentos
+  associados (por exemplo, Mercado → Tesco). Em banco existente, execute somente
+  o bloco **FH-SQL-010** ao fim de `banco.sql` antes de usar a versão nova.
+- Na Visão geral, os atalhos fixos abrem um lançamento de despesa ou o assistente.

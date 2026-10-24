@@ -184,7 +184,7 @@ async function callGroq(
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model, messages, tools: groqTools(), tool_choice: 'auto', temperature: 0.7, max_tokens: 1024 }),
+    body: JSON.stringify({ model, messages, tools: groqTools(), tool_choice: 'auto', temperature: 0.7, max_completion_tokens: 1024 }),
   })
   if (!response.ok) {
     const error = new Error(mapGroqError(response.status)) as Error & { code?: string }
@@ -282,8 +282,9 @@ function executors(
         { table: 'reminders_fh', columns: 'id,title,notes,remind_at,visibility,owner_id,created_by,created_at', fields: ['title', 'notes'] },
       ],
       finances: [
+        { table: 'financial_merchants_fh', columns: 'id,category_id,name,created_at', fields: ['name'] },
         { table: 'financial_accounts_fh', columns: 'id,name,type,currency,opening_balance,visibility,owner_id,created_by,created_at', fields: ['name', 'type'] },
-        { table: 'financial_transactions_fh', columns: 'id,kind,amount,currency,status,description,date,account_id,owner_id,created_by,created_at', fields: ['description'] },
+        { table: 'financial_transactions_fh', columns: 'id,kind,amount,currency,status,description,date,account_id,merchant_id,owner_id,created_by,created_at', fields: ['description'] },
         { table: 'financial_recurrences_fh', columns: 'id,kind,amount,currency,description,frequency,start_date,end_date,active,owner_id,created_by,created_at', fields: ['description'] },
         { table: 'financial_transfers_fh', columns: 'id,from_account,to_account,amount,currency,to_amount,to_currency,fee,date,description,created_by,created_at', fields: ['description', 'currency', 'to_currency'] },
         { table: 'exchange_rates_fh', columns: 'id,base,target,rate,source,manual,fetched_at,created_at', fields: ['base', 'target', 'source'] },
@@ -669,7 +670,7 @@ serve(async (request: Request): Promise<Response> => {
       ? await decryptText(cfg.encrypted_key)
       : Deno.env.get('GROQ_API_KEY')?.trim()
     if (!groqKey) return jsonResponse({ error: 'NO_KEY' }, 400)
-    const model = cfg?.model ?? 'llama-3.3-70b-versatile'
+    const model = cfg?.model ?? 'openai/gpt-oss-20b'
 
     const exec = executors(userClient, householdId, user.id)
 
