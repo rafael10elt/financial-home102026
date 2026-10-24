@@ -126,7 +126,11 @@ export function usePush(): PushState & {
       const registration = await navigator.serviceWorker.ready
       const subscription = await registration.pushManager.getSubscription()
       if (subscription) {
-        const { error } = await supabase.from('push_subscriptions_fh').delete().eq('user_id', user.id).eq('endpoint', subscription.endpoint)
+        const { error } = await supabase
+          .from('push_subscriptions_fh')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('endpoint', subscription.endpoint)
         if (error) throw error
         await subscription.unsubscribe()
       }
@@ -138,22 +142,25 @@ export function usePush(): PushState & {
   }
 
   async function sendTest(): Promise<{ sent: number; failed: number }> {
-  if (!user) throw new Error('Perfil não selecionado.')
-  const base = `${env.supabaseUrl.replace(/\/$/, '')}/functions/v1`
-  const response = await fetch(`${base}/push-test`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      apikey: env.supabaseAnonKey,
-      Authorization: `Bearer ${env.supabaseAnonKey}`,
-      'x-profile-id': user.id,
-    },
-    body: JSON.stringify({}),
-  })
+    if (!user) throw new Error('Perfil não selecionado.')
+    const base = `${env.supabaseUrl.replace(/\/$/, '')}/functions/v1`
+    const response = await fetch(`${base}/push-test`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        apikey: env.supabaseAnonKey,
+        Authorization: `Bearer ${env.supabaseAnonKey}`,
+        'x-profile-id': user.id,
+      },
+      body: JSON.stringify({}),
+    })
 
-  const data = await response.json()
-  if (!response.ok) {
-    throw new Error(data?.error ?? 'Falha ao enviar notificação de teste.')
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data?.error ?? 'Falha ao enviar notificação de teste.')
+    }
+    return data as { sent: number; failed: number }
   }
-  return data as { sent: number; failed: number }
+
+  return { ...state, subscribe, unsubscribe, refresh, sendTest }
 }
