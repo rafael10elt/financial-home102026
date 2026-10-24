@@ -15,6 +15,7 @@ import { Button } from '../../ui/Button'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Field, Input } from '../../ui/Input'
 import { Modal } from '../../ui/Modal'
+import { useToast } from '../../ui/ToastProvider'
 import { AnnouncementDialog, GossipDialog, MoodDialog, PostDialog, TipDialog } from './DiaryDialogs'
 
 type Tab = 'feed' | 'memories' | 'photos' | 'mood' | 'tips' | 'announcements' | 'gossip'
@@ -50,9 +51,10 @@ export function MediaImage({
 
 export function DiaryPage() {
   const { t } = useI18n()
-  const { user } = useAuth()
+  const { user, supabase } = useAuth()
   const { state: householdState } = useHousehold()
   const diary = useDiaryData()
+  const { notify } = useToast()
 
   const [tab, setTab] = useState<Tab>('feed')
   const [busy, setBusy] = useState(false)
@@ -67,6 +69,36 @@ export function DiaryPage() {
     | null
   >(null)
   const [confirmDelete, setConfirmDelete] = useState<{ table: string; id: string } | null>(null)
+  const [loginPhotoSlot, setLoginPhotoSlot] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!supabase || !user) {
+      setLoginPhotoSlot(null)
+      return
+    }
+    let cancelled = false
+    void supabase.from('profiles_fh').select('login_photo_slot').eq('id', user.id).maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setLoginPhotoSlot(data?.login_photo_slot ?? null)
+      })
+    return () => { cancelled = true }
+  }, [supabase, user])
+
+  async function chooseLoginPhoto(slot: number) {
+    if (!supabase || !user) return
+    const nextSlot = loginPhotoSlot === slot ? null : slot
+    const { data, error } = await supabase.from('profiles_fh').update({ login_photo_slot: nextSlot }).eq('id', user.id).select('id').maybeSingle()
+    if (error) {
+      notify('error', 'Não foi possível salvar a foto do perfil', error.message)
+      return
+    }
+    if (!data) {
+      notify('error', 'Não foi possível salvar a foto do perfil', 'O perfil não foi atualizado. Confira as permissões do banco.')
+      return
+    }
+    setLoginPhotoSlot(nextSlot)
+    notify('success', nextSlot ? 'Foto do perfil atualizada' : 'Foto do perfil removida')
+  }
 
   const [query, setQuery] = useState('')
   const [tagFilter, setTagFilter] = useState('')
@@ -344,15 +376,16 @@ export function DiaryPage() {
         <div className="flex flex-col gap-4">
           <Card>
             <CardTitle className="mb-1">{t('diary.slotsTitle')}</CardTitle>
-            <CardDescription className="mb-3">{t('diary.slotNote')}</CardDescription>
+            <CardDescription className="mb-3">{t('diary.slotNote')} Toque no círculo de uma foto para usá-la (ou removê-la) na tela de entrada.</CardDescription>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
               {[1, 2, 3, 4, 5].map((slot) => {
                 const filled = mySlots.find((s) => s.slot === slot)
                 return (
-                  <label
+                  <div
                     key={slot}
-                    className="relative flex aspect-square cursor-pointer items-center justify-center overflow-hidden rounded-md border border-border bg-muted text-xs text-muted-foreground hover:bg-accent"
+                    className="relative aspect-square overflow-hidden rounded-md border border-border bg-muted text-xs text-muted-foreground hover:bg-accent"
                   >
+                    <label htmlFor={`diary-photo-slot-${slot}`} className="absolute inset-0 flex cursor-pointer items-center justify-center">
                     {filled ? (
                       <MediaImage
                         path={filled.storage_path}
@@ -363,7 +396,17 @@ export function DiaryPage() {
                     ) : (
                       <span className="p-2 text-center">{t('diary.slotEmpty')}</span>
                     )}
+                    </label>
+                    {filled && (
+                      <button type="button" aria-pressed={loginPhotoSlot === slot}
+                        aria-label={loginPhotoSlot === slot ? 'Remover foto da tela de entrada' : 'Usar como foto da tela de entrada'}
+                        onClick={(event) => { event.preventDefault(); event.stopPropagation(); void chooseLoginPhoto(slot) }}
+                        className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-full border border-white/70 bg-black/60 text-white">
+                        {loginPhotoSlot === slot ? '✓' : '○'}
+                      </button>
+                    )}
                     <input
+                      id={`diary-photo-slot-${slot}`}
                       type="file"
                       accept="image/jpeg,image/png,image/webp,image/gif"
                       className="sr-only"
@@ -381,7 +424,7 @@ export function DiaryPage() {
                         })
                       }}
                     />
-                  </label>
+                  </div>
                 )
               })}
             </div>

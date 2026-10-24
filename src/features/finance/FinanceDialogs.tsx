@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
@@ -236,12 +236,23 @@ export function TransactionDialog({
   const [currency, setCurrency] = useState(initial?.currency ?? accounts[0]?.currency ?? 'EUR')
   const [status, setStatus] = useState<(typeof TX_STATUSES)[number]>(initial?.status ?? 'pendente')
   const [description, setDescription] = useState(initial?.description ?? '')
-  const [categoryId, setCategoryId] = useState(initial?.category_id ?? '')
+  const defaultExpenseCategory = categories.find(
+    (category) => category.kind === 'expense' && category.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR') === 'alimentacao',
+  ) ?? categories.find((category) => category.kind === 'expense' || !category.kind)
+  const [categoryId, setCategoryId] = useState(initial?.category_id ?? (defaultKind === 'expense' ? defaultExpenseCategory?.id ?? '' : ''))
   const [merchantId, setMerchantId] = useState(initial?.merchant_id ?? '')
   const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10))
   const [accountId, setAccountId] = useState(initial?.account_id ?? accounts[0]?.id ?? '')
   const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '')
   const [formError, setFormError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (initial || categoryId || kind !== 'expense' || categories.length === 0) return
+    const firstExpense = categories.find(
+      (category) => category.kind === 'expense' && category.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR') === 'alimentacao',
+    ) ?? categories.find((category) => category.kind === 'expense' || !category.kind)
+    if (firstExpense) setCategoryId(firstExpense.id)
+  }, [categories, categoryId, initial, kind])
 
   function submit(event: FormEvent) {
     event.preventDefault()

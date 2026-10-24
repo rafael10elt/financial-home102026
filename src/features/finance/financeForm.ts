@@ -6,8 +6,8 @@ export type Member = { user_id: string; display_name: string | null }
 export type Category = { id: string; name: string; kind: string | null }
 
 /** Normaliza entrada monetária ("1.234,56" ou "1234.56") para "1234.56". */
-export function parseAmountInput(raw: string): string | null {
-  let text = raw.trim().replace(/\s/g, '')
+export function parseAmountInput(raw: string | number): string | null {
+  let text = String(raw).trim().replace(/\s/g, '')
   if (text === '') return null
   const hasComma = text.includes(',')
   const hasDot = text.includes('.')

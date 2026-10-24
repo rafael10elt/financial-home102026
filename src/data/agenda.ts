@@ -106,8 +106,10 @@ export async function zodUpdate(
   id: string,
   payload: Record<string, unknown>,
 ): Promise<AgendaError> {
-  const { error } = await supabase.from(table).update(payload).eq('id', id)
-  return { error: error ? mapError(error.message) : null }
+  const { data, error } = await supabase.from(table).update(payload).eq('id', id).select('id').maybeSingle()
+  if (error) return { error: mapError(error.message) }
+  if (!data) return { error: 'Nenhum registro foi atualizado. Ele pode não existir mais ou você não ter permissão para editá-lo.' }
+  return { error: null }
 }
 
 export async function zodRemove(

@@ -16,11 +16,13 @@ export function Modal({
 }) {
   const { t } = useI18n()
   const dialogRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        onClose()
+        onCloseRef.current()
         return
       }
       // Armadilha de foco: Tab circula dentro do diálogo.
@@ -44,16 +46,16 @@ export function Modal({
       }
     }
     document.addEventListener('keydown', handleKey)
-    dialogRef.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus()
+    dialogRef.current?.querySelector<HTMLElement>('input:not([type="file"]):not([type="hidden"]), select, textarea, button:not([aria-label])')?.focus()
     return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
+  }, [])
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) onCloseRef.current()
       }}
     >
       <div

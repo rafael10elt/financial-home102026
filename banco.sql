@@ -159,6 +159,7 @@ create table if not exists public.profiles_fh (
   id            uuid primary key,
   display_name  text not null check (char_length(btrim(display_name)) between 1 and 80),
   household_id  uuid references public.households_fh (id) on delete set null,
+  login_photo_slot integer check (login_photo_slot between 1 and 5),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
@@ -2756,3 +2757,30 @@ select column_name from information_schema.columns
    and column_name = 'merchant_id';
 select relname, relrowsecurity from pg_class
  where relnamespace = 'public'::regnamespace and relname = 'financial_merchants_fh';
+
+-- ---------------------------------------------------------------------
+-- FH-SQL-011: foto opcional do perfil na tela de entrada
+-- ---------------------------------------------------------------------
+-- Guardar apenas o slot escolhido; o arquivo continua privado no bucket.
+-- Em bancos existentes, execute este bloco uma vez no SQL Editor.
+alter table public.profiles_fh
+  add column if not exists login_photo_slot integer;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_fh_login_photo_slot_check'
+      and conrelid = 'public.profiles_fh'::regclass
+  ) then
+    alter table public.profiles_fh
+      add constraint profiles_fh_login_photo_slot_check
+      check (login_photo_slot is null or login_photo_slot between 1 and 5);
+  end if;
+end $$;
+
+-- Validacao FH-SQL-011
+select column_name, data_type
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'profiles_fh'
+   and column_name = 'login_photo_slot';

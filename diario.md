@@ -1394,3 +1394,27 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - Próxima ação no Supabase: se o banco já existe, rodar somente FH-SQL-010 e
   publicar novamente `groq-config` e `groq-chat`. Nenhuma alteração remota foi
   aplicada nesta rodada.
+
+## Rodada 023 — Foco dos modais, salvamento de formulários e foto do perfil
+
+**Data:** 2026-10-24
+
+- Corrigida a armadilha de foco dos modais: callbacks recriados em cada render
+  faziam o efeito focar de novo o primeiro botão (o X de fechar). O foco inicial
+  agora prioriza campos editáveis e o listener de teclado fica estável.
+- Lançamentos novos começam com despesa e categoria Alimentação (ou a primeira
+  categoria de despesa existente caso Alimentação tenha sido removida); isso
+  também funciona quando as categorias chegam depois da abertura do diálogo.
+- Corrigido `parseAmountInput` para aceitar valores numéricos vindos do banco.
+  O erro observado (`raw.trim is not a function`) abortava o envio do diálogo
+  antes de chamar o update. Financeiro, Diário, Agenda e edições de memória e
+  automação da IA verificam se o update realmente alterou/devolveu uma linha e
+  exibem erro quando RLS ou um registro ausente impede a gravação.
+- No Diário → Fotos, cada imagem própria pode ser marcada como avatar da tela
+  de entrada. O cartão de perfil mostra a foto selecionada; a imagem permanece
+  no bucket privado e o navegador cria URL assinada usando o perfil local.
+- Banco: coluna opcional `profiles_fh.login_photo_slot` e migração idempotente
+  **FH-SQL-011** adicionadas ao `banco.sql`. Em banco existente, executar
+  somente esse bloco. Nenhuma alteração remota foi executada.
+- Próximo passo: aplicar FH-SQL-011 no SQL Editor do Supabase; após isso a
+  escolha de avatar fica persistida para o perfil em todos os navegadores.

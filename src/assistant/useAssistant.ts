@@ -281,9 +281,9 @@ export function useAssistantData() {
 
   async function updateMemory(id: string, patch: { content?: string; active?: boolean }) {
     if (!supabase) return { error: 'Supabase não configurado.' }
-    const { error } = await supabase.from('ai_memories_fh').update(patch).eq('id', id)
+    const { data, error } = await supabase.from('ai_memories_fh').update(patch).eq('id', id).select('id').maybeSingle()
     if (!error) reload()
-    return { error: error ? error.message : null }
+    return { error: error ? error.message : !data ? 'A memória não foi atualizada; ela pode ter sido removida ou você não ter permissão.' : null }
   }
 
   async function deleteMemory(id: string) {
@@ -296,9 +296,9 @@ export function useAssistantData() {
   async function saveWebhook(input: { name: string; url: string; events: string[]; active: boolean }, editingId: string | null) {
     if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.' }
     if (editingId) {
-      const { error } = await supabase.from('automation_webhooks_fh').update(input).eq('id', editingId)
+      const { data, error } = await supabase.from('automation_webhooks_fh').update(input).eq('id', editingId).select('id').maybeSingle()
       if (!error) reload()
-      return { error: error ? error.message : null }
+      return { error: error ? error.message : !data ? 'A automação não foi atualizada; ela pode ter sido removida ou você não ter permissão.' : null }
     }
     const { error } = await supabase
       .from('automation_webhooks_fh')

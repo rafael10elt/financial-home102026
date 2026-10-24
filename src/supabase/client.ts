@@ -32,3 +32,12 @@ export function getSupabase(): SupabaseClient | null {
   }
   return client
 }
+
+/** Cliente temporário para carregar avatar do perfil escolhido antes do login local. */
+export function getSupabaseForProfile(profileId: string): SupabaseClient | null {
+  if (!isSupabaseConfigured()) return null
+  return createClient(env.supabaseUrl, env.supabaseAnonKey, {
+    global: { headers: { 'x-profile-id': profileId } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  })
+}

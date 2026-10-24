@@ -321,8 +321,9 @@ export function useFinanceData() {
 
   async function update(table: string, id: string, payload: Record<string, unknown>, auditEntity?: string, before?: unknown) {
     if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.' }
-    const { error: updateError } = await supabase.from(table).update(payload).eq('id', id)
+    const { data, error: updateError } = await supabase.from(table).update(payload).eq('id', id).select('id').maybeSingle()
     if (updateError) return { error: mapError(updateError.message) }
+    if (!data) return { error: 'Nenhum registro foi atualizado. Ele pode não existir mais ou você não ter permissão para editá-lo.' }
     if (auditEntity) {
       await audit(supabase, householdId, user.id, auditEntity, id, 'update', before ?? null, payload)
     }
