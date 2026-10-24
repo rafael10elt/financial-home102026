@@ -26,6 +26,8 @@ export const TOOL_CATALOG: ToolInfo[] = [
   { name: 'finance_transaction_create', description: 'Criar lançamento (sempre pendente)', sensitive: false, required: ['kind', 'amount', 'description', 'account_id', 'date'] },
   { name: 'finance_transaction_update', description: 'Alterar lançamento', sensitive: true, required: ['id'] },
   { name: 'finance_transaction_delete', description: 'Excluir lançamento', sensitive: true, required: ['id'] },
+  { name: 'grocery_list', description: 'Consultar lista de compras', sensitive: false, required: [] },
+  { name: 'grocery_add', description: 'Adicionar itens à lista de compras', sensitive: false, required: ['items'] },
 ]
 
 export function toolInfo(name: string): ToolInfo | null {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
 import { useI18n } from '../i18n'
+import { useVoice } from '../assistant/useVoice'
 import { Button } from './Button'
 import { Card, CardTitle } from './Card'
 import { Modal } from './Modal'
@@ -22,6 +23,10 @@ export function GroceryListWidget() {
   const [confirmClear, setConfirmClear] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const lastLoadError = useRef<string | null>(null)
+
+  const voice = useVoice((transcript) => {
+    setName((prev) => (prev ? `${prev} ${transcript}` : transcript))
+  })
 
   const refresh = useCallback(async () => {
     if (!supabase || !householdId) { setItems([]); setLoading(false); return }
@@ -49,6 +54,7 @@ export function GroceryListWidget() {
 
   async function addItem(event: FormEvent) {
     event.preventDefault()
+    voice.stopListening()
     const cleanName = name.trim().slice(0, 120)
     if (!cleanName || !supabase || !householdId || !user) return
     setBusy(true)
@@ -87,8 +93,19 @@ export function GroceryListWidget() {
           {checkedCount > 0 && <Button size="sm" variant="secondary" disabled={busy} onClick={() => setConfirmClear(true)}>{t('overview.grocery.clearChecked', { count: checkedCount })}</Button>}
         </div>
         <form className="mt-3 flex gap-2" onSubmit={(event) => void addItem(event)}>
-          <input className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm" maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder={t('overview.grocery.placeholder')} aria-label={t('overview.grocery.placeholder')} />
-          <Button type="submit" aria-label={t('overview.grocery.add')} disabled={busy || !name.trim()}>＋</Button>
+          <input className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm" maxLength={120} value={voice.transcript || name} onChange={(event) => setName(event.target.value)} placeholder={t('overview.grocery.placeholder')} aria-label={t('overview.grocery.placeholder')} />
+          {voice.supportedRecognition && (
+            <Button
+              type="button"
+              variant={voice.listening ? 'destructive' : 'secondary'}
+              onClick={() => (voice.listening ? voice.stopListening() : voice.startListening())}
+              aria-label={voice.listening ? 'Parar gravação' : 'Gravar por voz'}
+              title={voice.listening ? 'Ouvindo...' : 'Falar item'}
+            >
+              {voice.listening ? '●' : '🎤'}
+            </Button>
+          )}
+          <Button type="submit" aria-label={t('overview.grocery.add')} disabled={busy || !(voice.transcript || name).trim()}>＋</Button>
         </form>
         {loadError && <p className="mt-3 text-sm text-destructive" role="alert">{t('overview.grocery.unavailable')}</p>}
         {loading ? <p className="mt-3 text-sm text-muted-foreground">{t('common.loading')}</p> : loadError ? null : items.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{t('overview.grocery.empty')}</p> : (

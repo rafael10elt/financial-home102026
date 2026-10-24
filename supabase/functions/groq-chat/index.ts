@@ -71,6 +71,33 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'grocery_list',
+    description: 'Lista os itens da lista rápida de compras/mercado da casa.',
+    sensitive: false,
+    parameters: {
+      type: 'object',
+      properties: {
+        include_checked: { type: 'boolean', description: 'Se verdadeiro, inclui itens já comprados. Padrão: falso.' },
+      },
+    },
+  },
+  {
+    name: 'grocery_add',
+    description: 'Adiciona um ou mais itens à lista rápida de compras da casa. Separe em itens individuais.',
+    sensitive: false,
+    parameters: {
+      type: 'object',
+      required: ['items'],
+      properties: {
+        items: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Lista com os nomes dos itens a comprar (ex: ["leite", "café", "pão"]).',
+        },
+      },
+    },
+  },
+  {
     name: 'task_create',
     description: 'Cria uma tarefa (rotina, reversível).',
     sensitive: false,
@@ -216,7 +243,6 @@ function canProfileSee(row: Record<string, unknown>, userId: string): boolean {
   if ('visibility' in row && row.visibility === 'personal') {
     return row.owner_id === userId || row.created_by === userId
   }
-  // Some personal records (for example gossip) predate the visibility field.
   if (row.owner_id != null) return row.owner_id === userId || row.created_by === userId
   return true
 }
@@ -340,7 +366,7 @@ function executors(
           read('tasks_fh', (q) => q.eq('status', 'open').order('due_at', { ascending: true, nullsFirst: false }).limit(50) as ReturnType<SupabaseClient['from']>),
           read('reminders_fh', (q) => q.is('dismissed_at', null).gte('remind_at', `${today}T00:00:00Z`).order('remind_at').limit(50) as ReturnType<SupabaseClient['from']>),
         ])
-        return { events, tasks, reminders };
+        return { events, tasks, reminders }
       },
     },
     tasks_open: {
@@ -444,6 +470,46 @@ function executors(
     household_search: {
       preview: async (args) => `Pesquisar na casa por “${String(args['query'] ?? '').slice(0, 80)}”.`,
       run: searchHousehold,
+    },
+    grocery_list: {
+      preview: async () => 'Consultar a lista de compras da casa.',
+      run: async (args) => {
+        let query = userClient
+          .from('grocery_items_fh')
+          .select('id,name,is_checked,created_at')
+          .eq('household_id', householdId)
+          .order('created_at', { ascending: true })
+        if (!args['include_checked']) {
+          query = query.eq('is_checked', false)
+        }
+        const { data, error } = await query
+        if (error) throw new Error(error.message)
+        return data ?? []
+      },
+    },
+    grocery_add: {
+      preview: async (args) => {
+        const items = Array.isArray(args['items']) ? (args['items'] as string[]) : []
+        return `Adicionar à lista de compras: ${items.join(', ')}.`
+      },
+      run: async (args) => {
+        const rawItems = Array.isArray(args['items']) ? (args['items'] as unknown[]) : []
+        const items = rawItems
+          .map((item) => String(item ?? '').trim().slice(0, 120))
+          .filter(Boolean)
+        if (items.length === 0) throw new Error('Nenhum item informado para a lista.')
+        const payload = items.map((name) => ({
+          household_id: householdId,
+          name,
+          created_by: userId,
+        }))
+        const { data, error } = await userClient
+          .from('grocery_items_fh')
+          .insert(payload)
+          .select('id,name')
+        if (error) throw new Error(error.message)
+        return { added: data }
+      },
     },
     task_create: {
       preview: async (args) => `Criar tarefa "${String(args['title'] ?? '').slice(0, 80)}".`,
@@ -578,7 +644,7 @@ function executors(
           .eq('household_id', householdId)
           .maybeSingle()
         const before = (data ?? {}) as Record<string, unknown>
-        return `Alterar lançamento "${String(before['description'] ?? args['id'])}" (${String(before['status'] ?? '?')}) com ${JSON.stringify(args)}.`;
+        return `Alterar lançamento "${String(before['description'] ?? args['id'])}" (${String(before['status'] ?? '?')}) com ${JSON.stringify(args)}.`
       },
       run: async (args) => {
         await assertCanManageTransaction(String(args['id'] ?? ''))
@@ -610,7 +676,7 @@ function executors(
           .eq('household_id', householdId)
           .maybeSingle()
         const row = (data ?? {}) as Record<string, unknown>
-        return `EXCLUIR lançamento "${String(row['description'] ?? args['id'])}" (${String(row['amount'] ?? '?')}, ${String(row['status'] ?? '?')}).`;
+        return `EXCLUIR lançamento "${String(row['description'] ?? args['id'])}" (${String(row['amount'] ?? '?')}, ${String(row['status'] ?? '?')}).`
       },
       run: async (args) => {
         await assertCanManageTransaction(String(args['id'] ?? ''))
@@ -626,9 +692,10 @@ function executors(
   }
 }
 
-const SYSTEM_PROMPT = `Você é a governanta digital do Financial Home: organizada, prestativa, rápida e levemente espirituosa. Conhece a rotina da casa e ajuda a mantê-la em ordem, sem comprometer precisão ou clareza.
+const SYSTEM_PROMPT = `Você é a governanta digital do Financial Home: organizada, prestativa, engraçada, rápida e levemente espirituosa. Conhece a rotina da casa e ajuda a mantê-la em ordem, sem comprometer precisão ou clareza.
 Hoje é {{DATE}}. Idioma: português (Brasil), a menos que peçam inglês.
 Use household_search para encontrar registros salvos em agenda, finanças, diário, dicas, recados e fofocas. Consulte somente os dados da casa desta conversa e respeite a visibilidade pessoal do perfil ativo.
+Use grocery_add e grocery_list para consultar e gerenciar a lista de compras/mercado da casa quando solicitado.
 Apresentação: responda em Markdown simples e bem organizado, pois a interface renderiza títulos, listas, negrito e tabelas. Comece pela conclusão ou resposta direta. Use parágrafos curtos e listas para tarefas, contas ou vários registros. Evite tabelas por padrão (principalmente no celular); use uma tabela somente quando comparar dados equivalentes ficar mais claro. Não mostre UUIDs, IDs internos, JSON bruto, nomes técnicos de ferramentas ou separadores de tabela como texto. Para valores, use a moeda original e formatação local (ex.: € 1.234,56); escreva datas de forma legível (ex.: 17/11/2026), em vez de expor campos crus.
 Insights: quando os dados permitirem, destaque no máximo 1–3 observações úteis, como vencimentos próximos, variações ou itens que merecem atenção. Separe claramente fatos salvos de inferências; explique a base da inferência e não invente causas, valores, tendências ou previsões. Se houver muitos resultados, resuma e mostre os mais relevantes, oferecendo detalhamento se pedirem.
 Regras: consulte apenas os dados necessários via ferramentas; nunca invente valores; lançamentos financeiros criados por você nascem PENDENTES; para alterar/excluir lançamentos, chame a ferramenta (o sistema pede confirmação ao usuário, não você); se uma ferramenta falhar, informe o erro real sem mascarar.`
@@ -666,8 +733,7 @@ serve(async (request: Request): Promise<Response> => {
       .eq('config_id', 'global')
       .maybeSingle()
     const cfg = config as { encrypted_key: string | null; model: string } | null
-    // Chave global opcional no ambiente da Edge Function; nunca lê VITE_ nem
-    // expõe segredo ao navegador. Configuração global criptografada tem prioridade.
+
     const groqKey = cfg?.encrypted_key
       ? await decryptText(cfg.encrypted_key)
       : Deno.env.get('GROQ_API_KEY')?.trim()
@@ -728,10 +794,9 @@ serve(async (request: Request): Promise<Response> => {
 
     const { data: memories } = await service
       .from('ai_memories_fh')
-          .select('content')
+      .select('content')
       .eq('household_id', householdId)
-          .or(`user_id.is.null,user_id.eq.${user.id}`)
-          .or(`user_id.is.null,user_id.eq.${user.id}`)
+      .or(`user_id.is.null,user_id.eq.${user.id}`)
       .eq('active', true)
       .limit(20)
     const memoryBlock = (((memories ?? []) as { content: string }[]).map((m) => m.content).join('\n') || '(nenhuma)')
