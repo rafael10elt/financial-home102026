@@ -1517,3 +1517,14 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - **Assistente/produção:** publicar ou confirmar a publicação da Edge Function `groq-chat` e testar consulta, resumo e ações com dados conhecidos nos dois perfis.
 - **PWA/offline:** validar instalação, cache privado/logout, conectividade e fila de sincronização em dispositivos reais; o quadro não enfileira mudanças offline e requer conexão para salvar etapas.
 - **Entrega final:** publicar no Netlify, revisar mobile/acessibilidade, fazer backup recuperável e completar testes de RLS por chamadas diretas à API. O build local, sozinho, não confirma esses itens.
+
+# 2026-10-24 — Preparação da entrega Push
+
+- O hook de push agora recupera a inscrição existente no carregamento, mantém estados corretos de suporte/configuração/permissão e sincroniza inscrição por perfil. Falhas e confirmações de ativar/desativar são comunicadas por toast.
+- O service worker trata eventos `push`, exibe notificações com ícone e abre a rota ao tocar no aviso. Adicionado botão “Enviar teste” em Configurações → Sincronização.
+- Criada a Edge Function `push-test`, com validação do perfil local no servidor, envio Web Push VAPID e limpeza automática de endpoints expirados. Chave privada fica nos segredos da função. O helper `supabase/scripts/generate-vapid.ts` gera o par de chaves.
+- Corrigida a migração histórica `20261014160000_fh_push.sql`: inscrições apontam para `profiles_fh` e policies reconhecem a identidade local (`current_profile_id_fh()`), compatível com a decisão de não usar Supabase Auth.
+- `banco.sql` já contém `push_subscriptions_fh` com FK para `profiles_fh` e policies compatíveis; não precisa rodar SQL adicional se essa versão foi aplicada.
+- Para ativar: gerar chaves com `deno run -A supabase/scripts/generate-vapid.ts`; inserir a linha `VITE_VAPID_PUBLIC_KEY` no ambiente do frontend e configurar `VAPID_KEYS`/`VAPID_SUBJECT` em Supabase Edge Function Secrets; publicar `push-test` com `--no-verify-jwt` porque o app usa `x-profile-id` e não JWT do Supabase Auth. Depois reconstruir/republicar o frontend e ativar push nos dispositivos.
+- Escopo: o botão valida entrega ponta a ponta com uma notificação de teste. Avisos de agenda/finanças automáticos com o app fechado ainda precisam de uma rotina server-side agendada e integração com `notifications_fh`; o gerador atual roda no cliente.
+- Banco remoto/função não foram executados nem implantados. Verificação local: `npm run build` passou; aviso existente de chunks acima de 500 kB permanece. A Edge Function depende de Deno/JSR e precisa ser validada no deploy do Supabase.

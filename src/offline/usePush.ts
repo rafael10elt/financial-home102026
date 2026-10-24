@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/context'
 
 export type PushState =
@@ -25,13 +25,13 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
 /**
  * Push do navegador (Web Push).
  * - Sem suporte (navegador) ou sem VAPID configurada: estados honestos.
- * - A ENTREGA depende de backend/worker com a chave privada (Fase 7/n8n):
- *   aqui capturamos e guardamos a inscrição; nada afirma entrega.
+ * - A chave privada permanece no servidor; aqui só é usada a chave pública.
  */
 export function usePush(): PushState & {
   subscribe: () => Promise<void>
   unsubscribe: () => Promise<void>
   refresh: () => Promise<void>
+  sendTest: () => Promise<{ sent: number; failed: number }>
 } {
   const { supabase, user } = useAuth()
   const [state, setState] = useState<PushState>(() => {
@@ -45,8 +45,20 @@ export function usePush(): PushState & {
     return { status: 'idle', subscribed: false }
   })
 
-  async function refresh() {
-    if (!('serviceWorker' in navigator) || !supabase || !user) return
+  const refresh = useCallback(async () => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setState({ status: 'unsupported' })
+      return
+    }
+    if (!vapidKey()) {
+      setState({ status: 'unconfigured' })
+      return
+    }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+      setState({ status: 'denied' })
+      return
+    }
+    if (!supabase || !user) return
     setState({ status: 'working' })
     try {
       const registration = await navigator.serviceWorker.ready
@@ -65,7 +77,11 @@ export function usePush(): PushState & {
     } catch (error) {
       setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
     }
-  }
+  }, [supabase, user])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   async function subscribe() {
     const key = vapidKey()
@@ -91,12 +107,14 @@ export function usePush(): PushState & {
         { onConflict: 'user_id,endpoint', ignoreDuplicates: true },
       )
       if (error) {
+        await subscription.unsubscribe()
         setState({ status: 'error', message: error.message })
-        return
+        throw error
       }
       setState({ status: 'idle', subscribed: true })
     } catch (error) {
       setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+      throw error
     }
   }
 
@@ -107,14 +125,23 @@ export function usePush(): PushState & {
       const registration = await navigator.serviceWorker.ready
       const subscription = await registration.pushManager.getSubscription()
       if (subscription) {
+        const { error } = await supabase.from('push_subscriptions_fh').delete().eq('user_id', user.id).eq('endpoint', subscription.endpoint)
+        if (error) throw error
         await subscription.unsubscribe()
-        await supabase.from('push_subscriptions_fh').delete().eq('user_id', user.id).eq('endpoint', subscription.endpoint)
       }
       setState({ status: 'idle', subscribed: false })
     } catch (error) {
       setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+      throw error
     }
   }
 
-  return { ...state, subscribe, unsubscribe, refresh }
+  async function sendTest(): Promise<{ sent: number; failed: number }> {
+    if (!supabase) throw new Error('Supabase não configurado.')
+    const { data, error } = await supabase.functions.invoke('push-test', { body: {} })
+    if (error) throw error
+    return data as { sent: number; failed: number }
+  }
+
+  return { ...state, subscribe, unsubscribe, refresh, sendTest }
 }

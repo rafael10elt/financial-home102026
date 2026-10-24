@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../auth/context'
 import { pendingCount, resolveConflict, useOutbox } from '../../offline/outbox'
@@ -6,6 +6,7 @@ import { useOnlineSync } from '../../offline/useOnline'
 import { usePush } from '../../offline/usePush'
 import { Button } from '../../ui/Button'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
+import { useToast } from '../../ui/toastContext'
 
 const STATE_KEYS = {
   pending: 'sync.state.pending',
@@ -17,11 +18,17 @@ const STATE_KEYS = {
 
 export function SyncSection() {
   const { t } = useI18n()
+  const { notify } = useToast()
   const { supabase } = useAuth()
   const { syncing, pending, syncNow } = useOnlineSync()
   const ops = useOutbox((state) => state.ops)
   const push = usePush()
   const [resolving, setResolving] = useState(false)
+  const [testingPush, setTestingPush] = useState(false)
+
+  useEffect(() => {
+    if (push.status === 'error') notify('error', t('sync.pushError'), push.message)
+  }, [push.status, push.status === 'error' ? push.message : '', notify, t])
 
   const visible = ops.filter((op) => op.state !== 'synced').slice(0, 50)
 
@@ -131,12 +138,42 @@ export function SyncSection() {
             )}
             <div className="flex gap-2">
               {!push.subscribed ? (
-                <Button size="sm" variant="secondary" onClick={() => void push.subscribe()}>
+                <Button size="sm" variant="secondary" onClick={() => {
+                  void push.subscribe().then(() => {
+                    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                      notify('success', t('sync.pushOnSuccess'))
+                    } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+                      notify('error', t('sync.pushDenied'))
+                    }
+                  }).catch((error: unknown) => notify('error', t('sync.pushError'), error instanceof Error ? error.message : String(error)))
+                }}>
                   {t('sync.pushOn')}
                 </Button>
               ) : (
-                <Button size="sm" variant="ghost" onClick={() => void push.unsubscribe()}>
+                <Button size="sm" variant="ghost" onClick={() => {
+                  void push.unsubscribe().then(() => notify('success', t('sync.pushOffSuccess')))
+                    .catch((error: unknown) => notify('error', t('sync.pushError'), error instanceof Error ? error.message : String(error)))
+                }}>
                   {t('sync.pushOff')}
+                </Button>
+              )}
+              {push.subscribed && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={testingPush}
+                  onClick={() => {
+                    setTestingPush(true)
+                    void push.sendTest()
+                      .then(({ sent, failed }) => {
+                        if (sent > 0) notify('success', t('sync.pushTestSent'))
+                        else notify('error', t('sync.pushTestFailed'), failed ? String(failed) : t('sync.pushNoDevices'))
+                      })
+                      .catch((error: unknown) => notify('error', t('sync.pushTestFailed'), error instanceof Error ? error.message : String(error)))
+                      .finally(() => setTestingPush(false))
+                  }}
+                >
+                  {testingPush ? t('common.loading') : t('sync.pushTest')}
                 </Button>
               )}
             </div>

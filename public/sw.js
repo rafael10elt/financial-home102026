@@ -35,6 +35,37 @@ self.addEventListener('message', (event) => {
   }
 })
 
+self.addEventListener('push', (event) => {
+  let payload = {}
+  try {
+    payload = event.data?.json() ?? {}
+  } catch {
+    payload = { body: event.data?.text() ?? '' }
+  }
+  const title = typeof payload.title === 'string' ? payload.title : 'Financial Home'
+  const options = {
+    body: typeof payload.body === 'string' ? payload.body : 'Você tem uma nova notificação.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: typeof payload.tag === 'string' ? payload.tag : 'financial-home',
+    data: { url: typeof payload.url === 'string' ? payload.url : '/' },
+    renotify: false,
+  }
+  event.waitUntil(self.registration.showNotification(title, options))
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const destination = new URL(event.notification.data?.url ?? '/', self.location.origin).href
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find((client) => client.url.startsWith(self.location.origin))
+      if (existing) return existing.navigate(destination).then((client) => client?.focus())
+      return self.clients.openWindow(destination)
+    }),
+  )
+})
+
 self.addEventListener('fetch', (event) => {
   const request = event.request
   if (request.method !== 'GET') return
