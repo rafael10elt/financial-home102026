@@ -1036,3 +1036,102 @@ transações nesse editor. Correção no `supabase/tests/rls-isolamento.sql`:
 etapa 3 reescrita como bloco `DO $$` único (lê o código e faz o join sem
 depender de temp table) + etapa 3b de prova (B enxerga 1 linha). A etapa 2
 passou a exibir `id, name, join_code` direto, sem temp table.
+## Rodada 012 — Entrada simplificada por perfil
+
+**Data:** 2026-10-24  
+**Objetivo:** reduzir atrito na entrada e aproveitar a autenticação/RLS e os
+módulos existentes, sem expor tabelas ao papel `anon`.
+
+### Alterações
+
+- `src/features/auth/LoginPage.tsx`: substituída a entrada por e-mail/senha por
+  cartões de seleção de perfil. A lista é configurável em `VITE_PROFILES`
+  (padrão: Jéssica,Rafael); cada cartão mostra iniciais em avatar colorido.
+- `src/auth/AuthProvider.tsx`: seleção cria uma sessão Supabase anônima com
+  `display_name` no metadata. Sessões são mantidas separadas por perfil no
+  navegador, preservando `auth.uid()` individual; atualizar o perfil selecionado
+  segue usando as policies existentes com papel `authenticated`.
+- `.env.example` e `README.md`: documentadas a lista de perfis e a necessidade
+  de ativar Anonymous Sign-Ins no painel Supabase (Authentication → Sign In /
+  Providers). A chave anon continua pública e protegida pelas policies RLS.
+- `src/app/AppShell.tsx`: layout passa a ocupar a largura útil do notebook e
+  continua fluido em telas estreitas.
+
+### Banco / configuração externa
+
+- Nenhum DDL é necessário; `banco.sql` permanece sem alteração. O trigger de
+  perfil já usa `raw_user_meta_data.display_name` e as sessões anônimas usam o
+  papel `authenticated` após o login anônimo.
+- A ativação do provedor é feita no Dashboard, não por SQL. Sem essa ativação,
+  a seleção mostrará o erro do Supabase.
+- Esta entrada é identificação de conveniência, não autenticação forte: qualquer
+  pessoa com acesso ao navegador pode escolher qualquer perfil. Perder os dados
+  locais pode exigir selecionar novamente e associar a nova sessão à casa.
+- Os avatares desta primeira etapa usam iniciais; fotos reais dependem de definir
+  imagens para cada perfil. Sem nomes/fotos confirmados pelo usuário, não foram
+  inventadas imagens pessoais.
+
+### Verificação e pendências
+
+- `npm run build`: concluído com sucesso (TypeScript + Vite). Vite emitiu aviso
+  já conhecido de chunk principal acima de 500 kB; PDFs e telas pesadas seguem
+  em chunks separados onde configurado. Nenhum teste foi executado nesta rodada.
+- Validar no ambiente Supabase: ativar Anonymous Sign-Ins; escolher cada perfil
+  em navegadores/perfis independentes; criar/entrar na casa; conferir autoria,
+  isolamento RLS e troca de perfil no mesmo navegador.
+- Sugestão realista: manter uma rotina de backup e recuperação das sessões; o
+  modo sem senha não oferece recuperação de conta se o armazenamento local for
+  apagado. Para duas pessoas no mesmo notebook, a troca de perfil é conveniente,
+  mas não impede que uma veja os dados da outra.
+
+## Rodada 013 — Sessões por perfil, convite, tema e uso seguro do Groq
+
+**Data:** 2026-10-24  
+**Objetivo:** corrigir a perda aparente da casa ao sair, explicar/mostrar o
+código de convite, dar acesso rápido ao tema e encaminhar `GROQ_API_KEY` pelo
+backend seguro.
+
+### Correções e melhorias
+
+- `src/auth/AuthProvider.tsx`: sair e alternar perfis agora encerram a sessão
+  somente localmente (`scope: 'local'`). O logout global anterior revogava no
+  Supabase o refresh token guardado do perfil; ao escolhê-lo novamente podia
+  nascer outro `auth.uid()` sem vínculo à casa. Não foi executada ação remota.
+- `src/app/AppShell.tsx`: o dono vê o código da casa no cabeçalho e pode copiá-lo.
+  O segundo perfil deve escolher seu nome, inserir o código e entrar na mesma
+  casa. A consulta existente carrega casa e membros pelo Supabase após entrar.
+- `src/features/household/OnboardingPage.tsx`: o tema também fica acessível no
+  onboarding, onde o cabeçalho principal ainda não é montado.
+- `src/preferences/ThemeToggle.tsx`: alterna claro/escuro, grava no armazenamento
+  local e sincroniza para `user_settings_fh` do usuário autenticado.
+- `supabase/functions/groq-chat` e `groq-config`: aceitam `GROQ_API_KEY` como
+  segredo global da Edge Function, sem expô-la ao navegador; chave criptografada
+  da casa continua tendo prioridade. O README documenta publicação e uso.
+- `banco.sql` ganhou FH-SQL-007, SELECT somente leitura para confirmar casas,
+  membros, nomes e código no SQL Editor. É diagnóstico, não DDL nem migração.
+
+### Estado real / ações externas
+
+- O código de criação chama `create_household_fh` (transação que insere casa,
+  membro owner e perfil) e atualiza o estado consultando o banco. A consulta
+  FH-SQL-007 ainda precisa ser rodada no projeto Supabase do usuário para
+  confirmar a linha persistida; o ambiente local não tem acesso administrativo
+  ao SQL Editor nem foi usado para alterar o projeto.
+- Para aderir à casa já criada após a sessão antiga ter sido revogada, o SQL
+  FH-SQL-007 mostra o código; o perfil atual pode então entrar com esse código.
+  Isso mantém a casa e os registros existentes no banco.
+- Para o chat Groq funcionar na hospedagem, aplicar FH-SQL-005 se ainda não
+  aplicado, definir o segredo `GROQ_API_KEY` no projeto Supabase e publicar
+  `groq-chat`/`groq-config`. O arquivo `.env` local não injeta segredos nas Edge
+  Functions. Nenhum segredo é prefixado com `VITE_`.
+- A chave Groq apareceu em saída da leitura local do `.env` nesta rodada. Por
+  segurança, revogue-a na Groq e gere outra antes de enviá-la ao Supabase.
+
+### Verificação pendente
+
+- `npm run build`: passou (TypeScript + Vite); aviso existente de chunk principal
+  acima de 500 kB. Nenhuma suíte de testes foi executada.
+- Executar FH-SQL-007 no SQL Editor e confirmar que mostra a casa e seus membros.
+- Testar alternância Jéssica/Rafael em um mesmo navegador e verificar persistência
+  do `auth.uid()`, membresia e preferência de tema por usuário.
+

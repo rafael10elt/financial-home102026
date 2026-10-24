@@ -8,6 +8,7 @@ import { cn } from '../lib/cn'
 import { ConnectionStatus } from '../ui/ConnectionStatus'
 import { pendingCount, useOutbox } from '../offline/outbox'
 import { useOnlineSync } from '../offline/useOnline'
+import { ThemeToggle } from '../preferences/ThemeToggle'
 
 function useUnreadCount(): number {
   const { supabase, user } = useAuth()
@@ -43,6 +44,7 @@ export function AppShell() {
   const { user, signOut } = useAuth()
   const { state } = useHousehold()
   const navigate = useNavigate()
+  const [codeCopied, setCodeCopied] = useState(false)
 
   const householdName = state.kind === 'ready' ? state.household.name : null
   const userName =
@@ -51,6 +53,16 @@ export function AppShell() {
   const outboxOps = useOutbox((state) => state.ops)
   const outboxPending = pendingCount(outboxOps)
   const { syncing } = useOnlineSync()
+
+  async function copyInviteCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCodeCopied(true)
+      window.setTimeout(() => setCodeCopied(false), 2000)
+    } catch {
+      setCodeCopied(false)
+    }
+  }
 
   const items = [
     { to: '/', label: t('nav.overview'), end: true },
@@ -74,13 +86,20 @@ export function AppShell() {
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <header className="border-b border-border bg-card">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
+        <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3">
           <div className="flex flex-col">
             <span className="text-sm font-semibold">{t('app.name')}</span>
             {householdName ? (
-              <span className="text-xs text-muted-foreground">
-                {t('house.current', { name: householdName })}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">{t('house.current', { name: householdName })}</span>
+                {state.kind === 'ready' && state.joinCodeVisible && state.household.join_code && (
+                  <button type="button" onClick={() => void copyInviteCode(state.household.join_code!)}
+                    className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                    title="Copiar código para convidar outro perfil">
+                    {codeCopied ? t('house.copied') : `${t('house.joinCode')}: ${state.household.join_code}`}
+                  </button>
+                )}
+              </div>
             ) : (
               <span className="text-xs text-muted-foreground">{t('house.waiting')}</span>
             )}
@@ -88,6 +107,7 @@ export function AppShell() {
 
           <div className="ml-auto flex items-center gap-2">
             <ConnectionStatus />
+            <ThemeToggle />
             {syncing ? (
               <span className="text-xs text-muted-foreground" role="status">
                 {t('connection.syncing')}
@@ -127,7 +147,7 @@ export function AppShell() {
           </div>
         </div>
 
-        <nav className="mx-auto max-w-6xl overflow-x-auto px-4 pb-2">
+        <nav className="w-full overflow-x-auto px-4 pb-2">
           <ul className="flex gap-1">
             {items.map((item) => (
               <li key={item.to}>
@@ -151,7 +171,7 @@ export function AppShell() {
         </nav>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="w-full px-3 py-4 sm:px-5 lg:px-8 lg:py-6">
         <Outlet />
       </main>
     </div>

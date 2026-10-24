@@ -11,6 +11,8 @@ export type AuthContextValue = {
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signUp: (email: string, password: string, displayName: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
+  selectProfile: (name: string) => Promise<{ error: string | null }>
+  profileName: string | null
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)

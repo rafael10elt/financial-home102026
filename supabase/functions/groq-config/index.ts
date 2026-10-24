@@ -76,9 +76,10 @@ serve(async (request: Request): Promise<Response> => {
         .eq('household_id', householdId)
         .maybeSingle()
       const row = data as { key_last4: string | null; model: string; encrypted_key: string | null } | null
+      const environmentKey = Deno.env.get('GROQ_API_KEY')?.trim() ?? ''
       return jsonResponse({
-        configured: Boolean(row?.encrypted_key),
-        key_last4: row?.key_last4 ?? null,
+        configured: Boolean(row?.encrypted_key || environmentKey),
+        key_last4: row?.encrypted_key ? row.key_last4 : environmentKey ? environmentKey.slice(-4) : null,
         model: row?.model ?? 'llama-3.3-70b-versatile',
       })
     }
@@ -114,11 +115,14 @@ serve(async (request: Request): Promise<Response> => {
         .eq('household_id', householdId)
         .maybeSingle()
       const row = data as { encrypted_key: string | null; model: string } | null
-      if (!row?.encrypted_key) return jsonResponse({ error: 'NO_KEY' }, 400)
-      const key = await decryptText(row.encrypted_key)
-      const probe = await testKey(key, row.model)
+      const key = row?.encrypted_key
+        ? await decryptText(row.encrypted_key)
+        : Deno.env.get('GROQ_API_KEY')?.trim()
+      if (!key) return jsonResponse({ error: 'NO_KEY' }, 400)
+      const model = row?.model ?? 'llama-3.3-70b-versatile'
+      const probe = await testKey(key, model)
       if (!probe.ok) return jsonResponse({ error: probe.code ?? 'GROQ_ERROR' }, 400)
-      return jsonResponse({ ok: true, model: row.model })
+      return jsonResponse({ ok: true, model })
     }
 
     if (action === 'remove') {

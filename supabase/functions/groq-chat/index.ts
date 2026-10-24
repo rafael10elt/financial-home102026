@@ -514,9 +514,13 @@ serve(async (request: Request): Promise<Response> => {
       .eq('household_id', householdId)
       .maybeSingle()
     const cfg = config as { encrypted_key: string | null; model: string } | null
-    if (!cfg?.encrypted_key) return jsonResponse({ error: 'NO_KEY' }, 400)
-    const groqKey = await decryptText(cfg.encrypted_key)
-    const model = cfg.model
+    // Chave global opcional no ambiente da Edge Function; nunca lê VITE_ nem
+    // expõe segredo ao navegador. Configuração criptografada da casa tem prioridade.
+    const groqKey = cfg?.encrypted_key
+      ? await decryptText(cfg.encrypted_key)
+      : Deno.env.get('GROQ_API_KEY')?.trim()
+    if (!groqKey) return jsonResponse({ error: 'NO_KEY' }, 400)
+    const model = cfg?.model ?? 'llama-3.3-70b-versatile'
 
     const exec = executors(userClient, householdId, user.id)
 

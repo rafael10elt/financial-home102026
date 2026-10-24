@@ -11,7 +11,8 @@ Documentos de controle (obrigatórios e cumulativos):
 ## Requisitos
 
 - Node.js 20+ (testado com Node 24) e npm 11+.
-- Projeto Supabase (gratuito) para autenticação e banco.
+- Projeto Supabase (gratuito) para sessões anônimas e banco. Ative o provedor
+  **Anonymous Sign-Ins** em Authentication → Sign In / Providers.
 - Conta Netlify + GitHub para deploy (Fase 7).
 
 ## Instalação
@@ -31,8 +32,9 @@ Sem `.env` válido a aplicação abre mostrando o estado real
 |---|---|---|---|
 | `VITE_SUPABASE_URL` | sim | frontend | URL do projeto Supabase (pública) |
 | `VITE_SUPABASE_ANON_KEY` | sim | frontend | chave `anon` pública, protegida por RLS |
+| `VITE_PROFILES` | não | frontend | nomes separados por vírgula na tela de seleção; padrão `Jéssica,Rafael` |
 | `GROQ_API_KEY` | depois (F5) | **somente backend** | chave Groq; nunca com prefixo `VITE_` |
-| `FH_GROQ_ENC_KEY` | depois (F5) | **somente backend** | chave de criptografia da chave Groq |
+| `GROQ_ENC_KEY` | opcional (F5) | **somente backend** | chave de criptografia de 32 bytes para armazenar chave Groq por casa |
 
 Nenhum segredo é aceito no bundle do frontend.
 
@@ -51,12 +53,20 @@ Nenhum segredo é aceito no bundle do frontend.
 ## Banco de dados
 
 1. Abra o Supabase SQL Editor.
-2. Revise o bloco `FH-SQL-001` em `banco.sql`.
-3. Execute o bloco inteiro **uma única vez**.
+2. Revise os blocos de banco necessários em `banco.sql`.
+3. Execute o FH-SQL-001 uma única vez; blocos posteriores são migrações incrementais.
 4. Rode as consultas de validação descritas no próprio bloco.
 5. (Opcional) `supabase/migrations/` espelha os blocos para uso com CLI.
 
 Nada é executado automaticamente no Supabase pelo projeto.
+
+### Entrada por perfil
+
+Na tela inicial, escolha um nome. O app cria uma sessão Supabase anônima por
+perfil e navegador; não há senha, mas cada perfil recebe um `auth.uid()` próprio
+para manter os registros e o RLS. Habilite Anonymous Sign-Ins no painel do
+Supabase. Apagar os dados do navegador também apaga as sessões locais; nesse
+caso, será criada uma nova identidade e será necessário entrar na casa novamente.
 
 ## Deploy (Netlify)
 
@@ -71,16 +81,29 @@ O chat e a chave Groq exigem duas Edge Functions implantadas. Sem elas, a
 tela do assistente mostra o estado real de "backend indisponível" — nada é
 simulado.
 
-Pré-requisitos: [Supabase CLI](https://supabase.com/docs/guides/cli),
-`FH-SQL-005` executado, e uma chave de criptografia de 32 bytes:
+O chat já está implementado. Para usar a chave global guardada no `.env`, copie-a
+para os segredos das Edge Functions (o Vite nunca envia `GROQ_API_KEY` ao
+navegador) e publique as funções:
+
+```powershell
+supabase login
+supabase link --project-ref SEU-PROJECT-REF
+supabase secrets set GROQ_API_KEY="COLE_A_CHAVE_GROQ_AQUI"
+supabase functions deploy groq-chat
+supabase functions deploy groq-config
+```
+
+Execute também o bloco `FH-SQL-005` em `banco.sql` se ainda não tiver aplicado
+as tabelas do assistente. A chave configurada como segredo do projeto é
+compartilhada pelas casas atendidas por essas funções; a chave salva pela tela
+Configurações → IA é por casa e fica criptografada no banco.
+
+Para armazenar uma chave por casa na interface, além do `FH-SQL-005` e das
+funções publicadas, configure `GROQ_ENC_KEY` como segredo de 32 bytes:
 
 ```bash
 # Gerar a chave de criptografia (guarde em local seguro, fora do Git)
 openssl rand -base64 32
-
-# Login + vínculo ao projeto
-supabase login
-supabase link --project-ref SEU-PROJECT-REF
 
 # Segredos (nunca no repositório)
 supabase secrets set GROQ_ENC_KEY="<base64-de-32-bytes>"

@@ -18,6 +18,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const supabase = getSupabase()
   const [session, setSession] = useState<Session | null>(null)
   const [status, setStatus] = useState<AuthStatus>(supabase ? 'loading' : 'unconfigured')
+  const [profileName, setProfileName] = useState<string | null>(() => localStorage.getItem('fh.active-profile'))
   const initialized = useRef(false)
 
   useEffect(() => {
@@ -41,6 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
       setStatus(nextSession ? 'authenticated' : 'anonymous')
+      const active = localStorage.getItem('fh.active-profile')
+      if (active && nextSession) {
+        localStorage.setItem(`fh.auth.profile.${active.toLocaleLowerCase('pt-BR')}`, JSON.stringify(nextSession))
+      }
     })
 
     return () => {
@@ -57,6 +62,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [supabase],
   )
+
+  const selectProfile = useCallback<AuthContextValue['selectProfile']>(async (name) => {
+    if (!supabase) return { error: 'Supabase não configurado.' }
+    const normalized = name.trim()
+    if (!normalized) return { error: 'Escolha um perfil válido.' }
+    try {
+      // Cada perfil mantém uma sessão anônima própria neste navegador. Assim,
+      // o banco continua recebendo um auth.uid() diferente por pessoa.
+      const storageKey = `fh.auth.profile.${normalized.toLocaleLowerCase('pt-BR')}`
+      localStorage.setItem('fh.active-profile', normalized)
+      setProfileName(normalized)
+      const cached = localStorage.getItem(storageKey)
+      if (cached) {
+        const previous = JSON.parse(cached) as Session
+        const { error } = await supabase.auth.setSession({
+          access_token: previous.access_token,
+          refresh_token: previous.refresh_token,
+        })
+        if (!error) {
+          localStorage.setItem('fh.active-profile', normalized)
+          setProfileName(normalized)
+          return { error: null }
+        }
+        localStorage.removeItem(storageKey)
+      }
+      // Remove a sessão ativa somente deste navegador; revogar no servidor
+      // invalidaria a sessão guardada para a troca posterior deste perfil.
+      await supabase.auth.signOut({ scope: 'local' })
+      const { data, error } = await supabase.auth.signInAnonymously({
+        options: { data: { display_name: normalized } },
+      })
+      if (error || !data.session) return { error: mapAuthError(error) ?? 'Não foi possível iniciar a sessão.' }
+      await supabase.auth.updateUser({ data: { display_name: normalized } })
+      localStorage.setItem(storageKey, JSON.stringify(data.session))
+      localStorage.setItem('fh.active-profile', normalized)
+      setProfileName(normalized)
+      return { error: null }
+    } catch {
+      return { error: 'Não foi possível selecionar esse perfil neste navegador.' }
+    }
+  }, [supabase])
 
   const signUp = useCallback<AuthContextValue['signUp']>(
     async (email, password, displayName) => {
@@ -78,7 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     if (supabase) {
       try {
-        await supabase.auth.signOut()
+        await supabase.auth.signOut({ scope: 'local' })
       } catch {
         // Sessão local já removida; não há o que fazer além de seguir.
       }
@@ -93,8 +139,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         navigator.serviceWorker.controller?.postMessage('fh:clear-private')
       }
       for (const key of Object.keys(localStorage)) {
-        if (key.startsWith('fh.') && key !== 'fh.preferences') localStorage.removeItem(key)
+        if (key.startsWith('fh.') && key !== 'fh.preferences' && !key.startsWith('fh.auth.profile.')) localStorage.removeItem(key)
       }
+      localStorage.removeItem('fh.active-profile')
       sessionStorage.clear()
     } catch {
       // Armazenamento indisponível (modo privado etc.): nada a limpar.
@@ -110,8 +157,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn,
       signUp,
       signOut,
+      selectProfile,
+      profileName,
     }),
-    [status, session, supabase, signIn, signUp, signOut],
+    [status, session, supabase, signIn, signUp, signOut, selectProfile, profileName],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

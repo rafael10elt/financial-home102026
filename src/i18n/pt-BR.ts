@@ -36,7 +36,7 @@ export const ptBR = {
   'house.name': 'Nome da casa',
   'house.code': 'Código da casa',
   'house.createHint': 'Cria uma nova casa e gera um código para a outra pessoa entrar.',
-  'house.joinHint': 'Digite o código recebido para entrar em uma casa existente.',
+  'house.joinHint': 'Crie a casa no primeiro perfil. Depois, selecione o outro perfil, cole aqui o código de convite mostrado no topo e entre na mesma casa.',
   'house.waiting': 'Você ainda não pertence a nenhuma casa.',
   'house.current': 'Casa atual: {name}',
   'house.members': 'Membros',

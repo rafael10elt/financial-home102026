@@ -51,6 +51,7 @@
 -- FH-SQL-004 | Fase 4 | 2026-10-14 | Diario: posts, midia, fotos, humor, dicas, anuncios, fofocas + Storage  [preparado]
 -- FH-SQL-005 | Fase 5 | 2026-10-14 | IA: config Groq, conversas, mensagens, memoria, logs + webhooks n8n  [preparado]
 -- FH-SQL-006 | Fase 6 | 2026-10-14 | Push: inscricoes de notificacao push por usuario  [preparado]
+-- FH-SQL-007 | Diagnostico | 2026-10-24 | Verificacao somente leitura de casas e membros  [preparado]
 -- =====================================================================
 
 
@@ -1086,6 +1087,35 @@ select relname, relrowsecurity
 -- 3) Total de policies (esperado: 38 — 8 da Fase 1 + 30 da Fase 2):
 select count(*) as total_policies from pg_policies
  where schemaname = 'public';
+
+-- =====================================================================
+-- FH-SQL-007 — Diagnostico somente leitura: casa, dono e membros
+-- Data: 2026-10-24
+-- Objetivo: confirmar no SQL Editor se a casa criada pela aplicacao foi
+--           persistida e quais perfis estao associados.
+-- Dependencias: FH-SQL-001 aplicado.
+-- Efeito: somente leitura; nao altera dados.
+-- Estado: [preparado].
+--
+-- Interpretacao: uma linha por membro. Se a consulta retornar zero linhas,
+-- confirme que o SQL Editor esta no projeto Supabase usado pelo .env.
+-- `join_code` e dado de convite: compartilhe apenas com a pessoa que entrara.
+-- =====================================================================
+select
+  h.name as casa,
+  h.created_at as criada_em,
+  h.created_by as usuario_dono_id,
+  owner_profile.display_name as nome_dono,
+  h.join_code as codigo_convite,
+  m.user_id as membro_id,
+  member_profile.display_name as nome_membro,
+  m.role as papel,
+  m.joined_at as entrou_em
+from public.households_fh h
+left join public.household_members_fh m on m.household_id = h.id
+left join public.profiles_fh owner_profile on owner_profile.id = h.created_by
+left join public.profiles_fh member_profile on member_profile.id = m.user_id
+order by h.created_at desc, m.joined_at;
 
 -- 4) Categorias globais da agenda (esperado: 4 linhas):
 select domain, name from public.categories_fh

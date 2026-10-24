@@ -4,6 +4,7 @@ import { useHousehold } from '../../household/context'
 import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
+import { ThemeToggle } from '../../preferences/ThemeToggle'
 
 export function OnboardingPage() {
   const { t } = useI18n()
@@ -47,9 +48,12 @@ export function OnboardingPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">{t('house.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('house.waiting')}</p>
+      <div className="flex items-start gap-3">
+        <div className="flex flex-1 flex-col gap-1">
+          <h1 className="text-xl font-semibold">{t('house.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('house.waiting')}</p>
+        </div>
+        <ThemeToggle />
       </div>
 
       {error && (
