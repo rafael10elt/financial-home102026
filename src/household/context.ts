@@ -6,6 +6,7 @@ export type HouseholdContextValue = {
   refresh: () => Promise<{ found: boolean; error: string | null }>
   createHousehold: (name: string) => Promise<{ error: string | null }>
   joinHousehold: (code: string) => Promise<{ error: string | null }>
+  renameHousehold: (name: string) => Promise<{ error: string | null }>
 }
 
 export const HouseholdContext = createContext<HouseholdContextValue | null>(null)

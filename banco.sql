@@ -12,9 +12,8 @@
 --  * Nunca remover migrações históricas. Correções entram como NOVOS blocos
 --    de compensação/correção, com novo identificador.
 --  * Nenhum segredo, chave, token ou senha pode aparecer neste arquivo.
---  * Todo objeto personalizado termina em `_fh` (ex.: tabela, view, função,
---    trigger). Objetos gerenciados pelo Supabase (ex.: `auth.users`,
---    `storage.objects`, `realtime.*`) são exceções.
+--  * Todo objeto personalizado termina em `_fh`. O app nao usa auth.users
+--    nem auth.uid(); o Supabase continua hospedando Postgres e Storage.
 --  * SQL pronto para execução é sempre separado e rotulado de SQL
 --    demonstrativo/exploratório.
 --  * Verificar o esquema existente antes de preparar uma migração, para
@@ -45,13 +44,14 @@
 -- ---------------------------------------------------------------------
 --
 -- FH-SQL-000 | Fase 0 | 2026-10-11 | Cabeçalho e convenções (sem DDL)   [preparado]
--- FH-SQL-001 | Fase 1 | 2026-10-11 | Casa, membros, perfis, preferências e RLS  [executado-pelo-usuario em 2026-10-14; validacao 3 confirmada: 8 policies]
+-- FH-SQL-001 | Fase 1 | 2026-10-11 | Casa, membros, perfis, preferências e RLS  [preparado para banco novo]
 -- FH-SQL-002 | Fase 2 | 2026-10-14 | Agenda, recorrencia, categorias, notificacoes e layout  [preparado]
 -- FH-SQL-003 | Fase 3 | 2026-10-14 | Financas: contas, lancamentos, recorrencias, transferencias, metas, cambio, importacao, auditoria  [preparado]
 -- FH-SQL-004 | Fase 4 | 2026-10-14 | Diario: posts, midia, fotos, humor, dicas, anuncios, fofocas + Storage  [preparado]
 -- FH-SQL-005 | Fase 5 | 2026-10-14 | IA: config Groq, conversas, mensagens, memoria, logs + webhooks n8n  [preparado]
 -- FH-SQL-006 | Fase 6 | 2026-10-14 | Push: inscricoes de notificacao push por usuario  [preparado]
 -- FH-SQL-007 | Diagnostico | 2026-10-24 | Verificacao somente leitura de casas e membros  [preparado]
+-- FH-SQL-008 | Identidade local | 2026-10-24 | Perfis Jéssica/Rafael e RLS por x-profile-id  [incluido no FH-SQL-001]
 -- =====================================================================
 
 
@@ -79,23 +79,22 @@ SELECT 'FH-SQL-000: livro banco.sql aberto. Nenhum objeto criado.' AS fh_check;
 -- Tipo: migracao nova
 -- Data: 2026-10-11
 -- Fase: 1 - Fundacao
--- Objetivo: criar o nucleo de identidade domestica (casa, membros, perfis,
---           preferencias por usuario) com Row Level Security, funcoes de
---           criacao/entrada de casa e trigger de perfil no cadastro.
--- Dependencias: projeto Supabase ativo; tabela `auth.users` (gerenciada).
+-- Objetivo: criar o nucleo de identidade domestica com perfis locais fixos,
+--           funcoes de casa e RLS que usa o header do perfil selecionado.
+-- Dependencias: projeto Supabase ativo (sem provedor de Auth).
 -- Pre-requisito: nenhum objeto `*_fh` existente (bloco inedito).
 --
 -- Objetos criados:
 --   Tabelas: households_fh, household_members_fh, profiles_fh, user_settings_fh
---   Funcoes: set_updated_at_fh(), current_household_id_fh(),
---            is_household_member_fh(uuid), handle_new_user_fh(),
+--   Funcoes: set_updated_at_fh(), current_profile_id_fh(), current_household_id_fh(),
+--            is_household_member_fh(uuid),
 --            create_household_fh(text), join_household_by_code_fh(text)
---   Trigger: t_auth_users_fh (apos insercao em auth.users)
+--   Perfis iniciais: Jéssica e Rafael (UUIDs fixos)
 --   Policies RLS nas 4 tabelas
 --
 -- Efeito esperado:
---   * Cadastro de usuario gera automaticamente um perfil.
---   * Usuario autenticado pode criar uma casa (vira owner) ou entrar com codigo.
+--   * A escolha de perfil seleciona a linha existente em profiles_fh.
+--   * O perfil selecionado pode criar uma casa (vira owner) ou entrar com codigo.
 --   * Membros da mesma casa veem os registros um do outro.
 --   * Preferencias pessoais ficam protegidas: so o proprio usuario le/grava.
 --   * Escritas diretas em household_members_fh sao bloqueadas: apenas as
@@ -105,8 +104,7 @@ SELECT 'FH-SQL-000: livro banco.sql aberto. Nenhum objeto criado.' AS fh_check;
 --   * Baixo risco. Nao ha dados a migrar (banco novo).
 --   * Rollback (somente se nada mais tiver sido criado depois):
 --
---     DROP TRIGGER IF EXISTS t_auth_users_fh ON auth.users;
---     DROP FUNCTION IF EXISTS public.handle_new_user_fh();
+--     DROP FUNCTION IF EXISTS public.current_profile_id_fh();
 --     DROP FUNCTION IF EXISTS public.join_household_by_code_fh(text);
 --     DROP FUNCTION IF EXISTS public.create_household_fh(text);
 --     DROP FUNCTION IF EXISTS public.is_household_member_fh(uuid);
@@ -133,6 +131,11 @@ SELECT 'FH-SQL-000: livro banco.sql aberto. Nenhum objeto criado.' AS fh_check;
 -- Estado: [executado-pelo-usuario em 2026-10-14] - validacao 3 confirmada (8 policies).
 -- =====================================================================
 
+-- INSTALACAO LIMPA (2026-10-24): o usuario apagara o esquema e executara
+-- este arquivo completo. Os blocos seguintes sao o esquema integral atual;
+-- nao e necessario criar/ativar usuarios no Supabase Auth nem rodar SQL
+-- complementar. Os UUIDs de Jéssica e Rafael abaixo sao perfis do app.
+
 begin;
 
 -- gen_random_bytes() vem do pgcrypto (necessario para o join_code).
@@ -146,23 +149,12 @@ create table if not exists public.households_fh (
   name        text not null check (char_length(btrim(name)) between 1 and 80),
   join_code   text not null unique
               default upper(encode(gen_random_bytes(6), 'hex')),
-  created_by  uuid not null default auth.uid(),
+  created_by  uuid not null,
   created_at  timestamptz not null default now()
 );
 
-create table if not exists public.household_members_fh (
-  household_id uuid not null references public.households_fh (id) on delete cascade,
-  user_id      uuid not null references auth.users (id) on delete cascade,
-  role         text not null default 'member' check (role in ('owner', 'member')),
-  joined_at    timestamptz not null default now(),
-  primary key (household_id, user_id)
-);
-
-create index if not exists household_members_fh_user_idx
-  on public.household_members_fh (user_id);
-
 create table if not exists public.profiles_fh (
-  id            uuid primary key references auth.users (id) on delete cascade,
+  id            uuid primary key,
   display_name  text not null check (char_length(btrim(display_name)) between 1 and 80),
   household_id  uuid references public.households_fh (id) on delete set null,
   created_at    timestamptz not null default now(),
@@ -172,11 +164,56 @@ create table if not exists public.profiles_fh (
 create index if not exists profiles_fh_household_idx
   on public.profiles_fh (household_id);
 
+-- Perfis locais fixos: podem ser adicionados/editados aqui sem Auth.
+insert into public.profiles_fh (id, display_name) values
+  ('00000000-0000-4000-8000-000000000001', 'Jéssica'),
+  ('00000000-0000-4000-8000-000000000002', 'Rafael')
+on conflict (id) do update set display_name = excluded.display_name;
+
+-- O navegador envia x-profile-id. Isto e apenas identificacao visual:
+-- qualquer pessoa pode alterar o header e assumir outro perfil.
+create or replace function public.current_profile_id_fh()
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_headers text;
+  v_id uuid;
+  v_exists boolean;
+begin
+  v_headers := current_setting('request.headers', true);
+  if v_headers is null then return null; end if;
+  begin
+    v_id := (v_headers::jsonb ->> 'x-profile-id')::uuid;
+  exception when others then
+    return null;
+  end;
+  execute 'select exists (select 1 from public.profiles_fh where id = $1)'
+    into v_exists using v_id;
+  if v_exists then return v_id; end if;
+  return null;
+end;
+$$;
+
 create table if not exists public.user_settings_fh (
-  user_id     uuid primary key references auth.users (id) on delete cascade,
+  user_id     uuid primary key references public.profiles_fh (id) on delete cascade,
   preferences jsonb not null default '{}'::jsonb,
   updated_at  timestamptz not null default now()
 );
+
+create table if not exists public.household_members_fh (
+  household_id uuid not null references public.households_fh (id) on delete cascade,
+  user_id      uuid not null references public.profiles_fh (id) on delete cascade,
+  role         text not null default 'member' check (role in ('owner', 'member')),
+  joined_at    timestamptz not null default now(),
+  primary key (household_id, user_id)
+);
+
+create index if not exists household_members_fh_user_idx
+  on public.household_members_fh (user_id);
 
 -- ---------------------------------------------------------------------
 -- 2. Funcoes auxiliares
@@ -191,7 +228,7 @@ begin
 end;
 $$;
 
--- Recupera a casa do usuario autenticado.
+-- Recupera a casa do perfil ativo enviado pelo navegador.
 -- SECURITY DEFINER: le profiles_fh sem depender de RLS (evita recursao).
 create or replace function public.current_household_id_fh()
 returns uuid
@@ -202,11 +239,11 @@ set search_path = public
 as $$
   select p.household_id
   from public.profiles_fh p
-  where p.id = auth.uid()
+  where p.id = public.current_profile_id_fh()
   limit 1;
 $$;
 
--- Verifica se o usuario autenticado pertence a casa informada.
+-- Verifica se o perfil selecionado pertence a casa informada.
 -- SECURITY DEFINER: necessaria porque as policies referenciam esta tabela
 -- (sem isso o Postgres acusa recursao de RLS).
 create or replace function public.is_household_member_fh(p_household_id uuid)
@@ -220,42 +257,13 @@ as $$
     select 1
     from public.household_members_fh m
     where m.household_id = p_household_id
-      and m.user_id = auth.uid()
+      and m.user_id = public.current_profile_id_fh()
   );
 $$;
 
 -- ---------------------------------------------------------------------
--- 3. Perfil automatico no cadastro (trigger em auth.users)
--- ---------------------------------------------------------------------
-create or replace function public.handle_new_user_fh()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.profiles_fh (id, display_name)
-  values (
-    new.id,
-    coalesce(
-      nullif(trim(new.raw_user_meta_data ->> 'display_name'), ''),
-      split_part(coalesce(new.email, 'user'), '@', 1)
-    )
-  )
-  on conflict (id) do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists t_auth_users_fh on auth.users;
-create trigger t_auth_users_fh
-  after insert on auth.users
-  for each row execute function public.handle_new_user_fh();
-
--- ---------------------------------------------------------------------
 -- 4. Funcoes de criacao e entrada de casa (SECURITY DEFINER)
 -- ---------------------------------------------------------------------
--- Garante um perfil mesmo que o trigger ja tenha rodado antes desta migracao.
 create or replace function public.create_household_fh(p_name text)
 returns uuid
 language plpgsql
@@ -263,11 +271,11 @@ security definer
 set search_path = public
 as $$
 declare
-  v_user uuid := auth.uid();
+  v_user uuid := public.current_profile_id_fh();
   v_household_id uuid;
 begin
   if v_user is null then
-    raise exception 'autenticacao_requerida';
+    raise exception 'perfil_requerido';
   end if;
   if p_name is null or char_length(btrim(p_name)) = 0 then
     raise exception 'nome_invalido';
@@ -277,17 +285,6 @@ begin
   ) then
     raise exception 'usuario_ja_pertence_a_uma_casa';
   end if;
-
-  insert into public.profiles_fh (id, display_name)
-  values (
-    v_user,
-    coalesce(
-      nullif(trim((select u.raw_user_meta_data ->> 'display_name'
-                   from auth.users u where u.id = v_user)), ''),
-      split_part(coalesce((select u.email from auth.users u where u.id = v_user), 'user'), '@', 1)
-    )
-  )
-  on conflict (id) do nothing;
 
   insert into public.households_fh (name, created_by)
   values (btrim(p_name), v_user)
@@ -311,12 +308,12 @@ security definer
 set search_path = public
 as $$
 declare
-  v_user uuid := auth.uid();
+  v_user uuid := public.current_profile_id_fh();
   v_code text := upper(btrim(coalesce(p_code, '')));
   v_household_id uuid;
 begin
   if v_user is null then
-    raise exception 'autenticacao_requerida';
+    raise exception 'perfil_requerido';
   end if;
 
   select id into v_household_id
@@ -326,17 +323,6 @@ begin
   if v_household_id is null then
     raise exception 'codigo_invalido';
   end if;
-
-  insert into public.profiles_fh (id, display_name)
-  values (
-    v_user,
-    coalesce(
-      nullif(trim((select u.raw_user_meta_data ->> 'display_name'
-                   from auth.users u where u.id = v_user)), ''),
-      split_part(coalesce((select u.email from auth.users u where u.id = v_user), 'user'), '@', 1)
-    )
-  )
-  on conflict (id) do nothing;
 
   insert into public.household_members_fh (household_id, user_id, role)
   values (v_household_id, v_user, 'member')
@@ -375,29 +361,29 @@ alter table public.user_settings_fh enable row level security;
 drop policy if exists households_fh_select on public.households_fh;
 create policy households_fh_select on public.households_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (public.is_household_member_fh(id));
 
 drop policy if exists households_fh_update on public.households_fh;
 create policy households_fh_update on public.households_fh
   for update
-  to authenticated
-  using (created_by = auth.uid() and public.is_household_member_fh(id))
-  with check (created_by = auth.uid() and public.is_household_member_fh(id));
+  to anon, authenticated
+  using (created_by = public.current_profile_id_fh() and public.is_household_member_fh(id))
+  with check (created_by = public.current_profile_id_fh() and public.is_household_member_fh(id));
 
 drop policy if exists households_fh_delete on public.households_fh;
 create policy households_fh_delete on public.households_fh
   for delete
-  to authenticated
-  using (created_by = auth.uid() and public.is_household_member_fh(id));
+  to anon, authenticated
+  using (created_by = public.current_profile_id_fh() and public.is_household_member_fh(id));
 -- Sem policy de INSERT: so create_household_fh (SECURITY DEFINER) insere.
 
 -- household_members_fh: leitura para membros da mesma casa; escrita apenas via funcao.
 drop policy if exists household_members_fh_select on public.household_members_fh;
 create policy household_members_fh_select on public.household_members_fh
   for select
-  to authenticated
-  using (user_id = auth.uid() or public.is_household_member_fh(household_id));
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh() or public.is_household_member_fh(household_id));
 -- Sem policies de INSERT/UPDATE/DELETE: escrita exclusiva das funcoes.
 
 -- profiles_fh: o proprio usuario e os membros da mesma casa leem;
@@ -405,42 +391,32 @@ create policy household_members_fh_select on public.household_members_fh
 drop policy if exists profiles_fh_select on public.profiles_fh;
 create policy profiles_fh_select on public.profiles_fh
   for select
-  to authenticated
-  using (
-    id = auth.uid()
-    or (household_id is not null and public.is_household_member_fh(household_id))
-  );
-
-drop policy if exists profiles_fh_insert on public.profiles_fh;
-create policy profiles_fh_insert on public.profiles_fh
-  for insert
-  to authenticated
-  with check (id = auth.uid());
+  to anon, authenticated
+  using (true);
 
 drop policy if exists profiles_fh_update on public.profiles_fh;
 create policy profiles_fh_update on public.profiles_fh
   for update
-  to authenticated
-  using (id = auth.uid())
-  with check (id = auth.uid());
+  to anon, authenticated
+  using (id = public.current_profile_id_fh())
+  with check (id = public.current_profile_id_fh());
 
 -- user_settings_fh: estritamente pessoal.
 drop policy if exists user_settings_fh_all on public.user_settings_fh;
 create policy user_settings_fh_all on public.user_settings_fh
   for all
-  to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh())
+  with check (user_id = public.current_profile_id_fh());
 
 -- ---------------------------------------------------------------------
 -- 7. Permissoes de execucao das funcoes
 -- ---------------------------------------------------------------------
-revoke all on function public.create_household_fh(text) from public, anon;
-revoke all on function public.join_household_by_code_fh(text) from public, anon;
-grant execute on function public.create_household_fh(text) to authenticated;
-grant execute on function public.join_household_by_code_fh(text) to authenticated;
-grant execute on function public.current_household_id_fh() to authenticated;
-grant execute on function public.is_household_member_fh(uuid) to authenticated;
+grant execute on function public.current_profile_id_fh() to anon, authenticated;
+grant execute on function public.create_household_fh(text) to anon, authenticated;
+grant execute on function public.join_household_by_code_fh(text) to anon, authenticated;
+grant execute on function public.current_household_id_fh() to anon, authenticated;
+grant execute on function public.is_household_member_fh(uuid) to anon, authenticated;
 
 commit;
 
@@ -535,7 +511,7 @@ as $$
     select 1
     from public.households_fh h
     where h.id = p_household_id
-      and h.created_by = auth.uid()
+      and h.created_by = public.current_profile_id_fh()
   );
 $$;
 
@@ -628,7 +604,7 @@ create table if not exists public.events_fh (
   all_day             boolean not null default false,
   category_id         uuid references public.categories_fh (id) on delete set null,
   visibility          text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id            uuid references auth.users (id) on delete set null,
+  owner_id            uuid references public.profiles_fh (id) on delete set null,
   created_by          uuid,
   recurrence_rule_id  uuid references public.recurrence_rules_fh (id) on delete set null,
   created_at          timestamptz not null default now(),
@@ -652,7 +628,7 @@ create table if not exists public.tasks_fh (
   completed_at        timestamptz,
   category_id         uuid references public.categories_fh (id) on delete set null,
   visibility          text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id            uuid references auth.users (id) on delete set null,
+  owner_id            uuid references public.profiles_fh (id) on delete set null,
   created_by          uuid,
   recurrence_rule_id  uuid references public.recurrence_rules_fh (id) on delete set null,
   created_at          timestamptz not null default now(),
@@ -670,7 +646,7 @@ create table if not exists public.reminders_fh (
   notes               text,
   category_id         uuid references public.categories_fh (id) on delete set null,
   visibility          text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id            uuid references auth.users (id) on delete set null,
+  owner_id            uuid references public.profiles_fh (id) on delete set null,
   created_by          uuid,
   recurrence_rule_id  uuid references public.recurrence_rules_fh (id) on delete set null,
   dismissed_at        timestamptz,
@@ -687,7 +663,7 @@ create index if not exists reminders_fh_remind_idx on public.reminders_fh (remin
 create table if not exists public.notifications_fh (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households_fh (id) on delete cascade,
-  user_id      uuid not null references auth.users (id) on delete cascade,
+  user_id      uuid not null references public.profiles_fh (id) on delete cascade,
   type         text not null,
   title        text not null check (char_length(btrim(title)) between 1 and 200),
   body         text,
@@ -703,7 +679,7 @@ create index if not exists notifications_fh_user_idx
   on public.notifications_fh (user_id, read_at);
 
 create table if not exists public.notification_preferences_fh (
-  user_id          uuid primary key references auth.users (id) on delete cascade,
+  user_id          uuid primary key references public.profiles_fh (id) on delete cascade,
   enabled          boolean not null default true,
   digest_enabled   boolean not null default false,
   lead_time_hours  integer not null default 24 check (lead_time_hours >= 0),
@@ -714,7 +690,7 @@ create table if not exists public.notification_preferences_fh (
 -- 6. Layout de widgets por usuário
 -- ---------------------------------------------------------------------
 create table if not exists public.dashboard_layouts_fh (
-  user_id    uuid primary key references auth.users (id) on delete cascade,
+  user_id    uuid primary key references public.profiles_fh (id) on delete cascade,
   layout     jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
@@ -775,13 +751,13 @@ alter table public.dashboard_layouts_fh enable row level security;
 drop policy if exists categories_fh_select on public.categories_fh;
 create policy categories_fh_select on public.categories_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (household_id is null or public.is_household_member_fh(household_id));
 
 drop policy if exists categories_fh_insert on public.categories_fh;
 create policy categories_fh_insert on public.categories_fh
   for insert
-  to authenticated
+  to anon, authenticated
   with check (
     household_id is not null
     and public.is_household_member_fh(household_id)
@@ -790,56 +766,56 @@ create policy categories_fh_insert on public.categories_fh
 drop policy if exists categories_fh_update on public.categories_fh;
 create policy categories_fh_update on public.categories_fh
   for update
-  to authenticated
+  to anon, authenticated
   using (
     household_id is not null
-    and (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+    and (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   )
   with check (
     household_id is not null
-    and (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+    and (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   );
 
 drop policy if exists categories_fh_delete on public.categories_fh;
 create policy categories_fh_delete on public.categories_fh
   for delete
-  to authenticated
+  to anon, authenticated
   using (
     household_id is not null
-    and (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+    and (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   );
 
 -- Regras de recorrência: escopo da casa; escrita pelo criador ou dono da casa.
 drop policy if exists recurrence_rules_fh_select on public.recurrence_rules_fh;
 create policy recurrence_rules_fh_select on public.recurrence_rules_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (public.is_household_member_fh(household_id));
 
 drop policy if exists recurrence_rules_fh_insert on public.recurrence_rules_fh;
 create policy recurrence_rules_fh_insert on public.recurrence_rules_fh
   for insert
-  to authenticated
+  to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 
 drop policy if exists recurrence_rules_fh_update on public.recurrence_rules_fh;
 create policy recurrence_rules_fh_update on public.recurrence_rules_fh
   for update
-  to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id))
-  with check (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
+  with check (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 drop policy if exists recurrence_rules_fh_delete on public.recurrence_rules_fh;
 create policy recurrence_rules_fh_delete on public.recurrence_rules_fh
   for delete
-  to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 -- Exceções: seguem a casa da regra-pai.
 drop policy if exists recurrence_exceptions_fh_select on public.recurrence_exceptions_fh;
 create policy recurrence_exceptions_fh_select on public.recurrence_exceptions_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (
     exists (
       select 1 from public.recurrence_rules_fh r
@@ -850,7 +826,7 @@ create policy recurrence_exceptions_fh_select on public.recurrence_exceptions_fh
 drop policy if exists recurrence_exceptions_fh_insert on public.recurrence_exceptions_fh;
 create policy recurrence_exceptions_fh_insert on public.recurrence_exceptions_fh
   for insert
-  to authenticated
+  to anon, authenticated
   with check (
     exists (
       select 1 from public.recurrence_rules_fh r
@@ -861,9 +837,9 @@ create policy recurrence_exceptions_fh_insert on public.recurrence_exceptions_fh
 drop policy if exists recurrence_exceptions_fh_update on public.recurrence_exceptions_fh;
 create policy recurrence_exceptions_fh_update on public.recurrence_exceptions_fh
   for update
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
+    created_by = public.current_profile_id_fh()
     or exists (
       select 1 from public.recurrence_rules_fh r
       where r.id = recurrence_exceptions_fh.rule_id
@@ -871,7 +847,7 @@ create policy recurrence_exceptions_fh_update on public.recurrence_exceptions_fh
     )
   )
   with check (
-    created_by = auth.uid()
+    created_by = public.current_profile_id_fh()
     or exists (
       select 1 from public.recurrence_rules_fh r
       where r.id = recurrence_exceptions_fh.rule_id
@@ -882,9 +858,9 @@ create policy recurrence_exceptions_fh_update on public.recurrence_exceptions_fh
 drop policy if exists recurrence_exceptions_fh_delete on public.recurrence_exceptions_fh;
 create policy recurrence_exceptions_fh_delete on public.recurrence_exceptions_fh
   for delete
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
+    created_by = public.current_profile_id_fh()
     or exists (
       select 1 from public.recurrence_rules_fh r
       where r.id = recurrence_exceptions_fh.rule_id
@@ -897,126 +873,126 @@ create policy recurrence_exceptions_fh_delete on public.recurrence_exceptions_fh
 drop policy if exists events_fh_select on public.events_fh;
 create policy events_fh_select on public.events_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh())
   );
 
 drop policy if exists events_fh_insert on public.events_fh;
 create policy events_fh_insert on public.events_fh
   for insert
-  to authenticated
+  to anon, authenticated
   with check (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh())
   );
 
 drop policy if exists events_fh_update on public.events_fh;
 create policy events_fh_update on public.events_fh
   for update
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
-    or owner_id = auth.uid()
+    created_by = public.current_profile_id_fh()
+    or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id)
   )
   with check (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh())
   );
 
 drop policy if exists events_fh_delete on public.events_fh;
 create policy events_fh_delete on public.events_fh
   for delete
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
-    or owner_id = auth.uid()
+    created_by = public.current_profile_id_fh()
+    or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id)
   );
 
 drop policy if exists tasks_fh_select on public.tasks_fh;
 create policy tasks_fh_select on public.tasks_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh())
   );
 
 drop policy if exists tasks_fh_insert on public.tasks_fh;
 create policy tasks_fh_insert on public.tasks_fh
   for insert
-  to authenticated
+  to anon, authenticated
   with check (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh())
   );
 
 drop policy if exists tasks_fh_update on public.tasks_fh;
 create policy tasks_fh_update on public.tasks_fh
   for update
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
-    or owner_id = auth.uid()
+    created_by = public.current_profile_id_fh()
+    or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id)
   )
   with check (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh())
   );
 
 drop policy if exists tasks_fh_delete on public.tasks_fh;
 create policy tasks_fh_delete on public.tasks_fh
   for delete
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
-    or owner_id = auth.uid()
+    created_by = public.current_profile_id_fh()
+    or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id)
   );
 
 drop policy if exists reminders_fh_select on public.reminders_fh;
 create policy reminders_fh_select on public.reminders_fh
   for select
-  to authenticated
+  to anon, authenticated
   using (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh())
   );
 
 drop policy if exists reminders_fh_insert on public.reminders_fh;
 create policy reminders_fh_insert on public.reminders_fh
   for insert
-  to authenticated
+  to anon, authenticated
   with check (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh())
   );
 
 drop policy if exists reminders_fh_update on public.reminders_fh;
 create policy reminders_fh_update on public.reminders_fh
   for update
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
-    or owner_id = auth.uid()
+    created_by = public.current_profile_id_fh()
+    or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id)
   )
   with check (
     public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid())
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh())
   );
 
 drop policy if exists reminders_fh_delete on public.reminders_fh;
 create policy reminders_fh_delete on public.reminders_fh
   for delete
-  to authenticated
+  to anon, authenticated
   using (
-    created_by = auth.uid()
-    or owner_id = auth.uid()
+    created_by = public.current_profile_id_fh()
+    or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id)
   );
 
@@ -1024,48 +1000,48 @@ create policy reminders_fh_delete on public.reminders_fh
 drop policy if exists notifications_fh_select on public.notifications_fh;
 create policy notifications_fh_select on public.notifications_fh
   for select
-  to authenticated
-  using (user_id = auth.uid());
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh());
 
 drop policy if exists notifications_fh_insert on public.notifications_fh;
 create policy notifications_fh_insert on public.notifications_fh
   for insert
-  to authenticated
-  with check (user_id = auth.uid());
+  to anon, authenticated
+  with check (user_id = public.current_profile_id_fh());
 
 drop policy if exists notifications_fh_update on public.notifications_fh;
 create policy notifications_fh_update on public.notifications_fh
   for update
-  to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh())
+  with check (user_id = public.current_profile_id_fh());
 
 drop policy if exists notifications_fh_delete on public.notifications_fh;
 create policy notifications_fh_delete on public.notifications_fh
   for delete
-  to authenticated
-  using (user_id = auth.uid());
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh());
 
 -- Preferências de notificação e layout: estritamente pessoais.
 drop policy if exists notification_preferences_fh_all on public.notification_preferences_fh;
 create policy notification_preferences_fh_all on public.notification_preferences_fh
   for all
-  to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh())
+  with check (user_id = public.current_profile_id_fh());
 
 drop policy if exists dashboard_layouts_fh_all on public.dashboard_layouts_fh;
 create policy dashboard_layouts_fh_all on public.dashboard_layouts_fh
   for all
-  to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  to anon, authenticated
+  using (user_id = public.current_profile_id_fh())
+  with check (user_id = public.current_profile_id_fh());
 
 -- ---------------------------------------------------------------------
 -- 9. Permissões de execução da função auxiliar
 -- ---------------------------------------------------------------------
 revoke all on function public.is_household_owner_fh(uuid) from public, anon;
-grant execute on function public.is_household_owner_fh(uuid) to authenticated;
+grant execute on function public.is_household_owner_fh(uuid) to anon, authenticated;
 
 commit;
 
@@ -1088,7 +1064,16 @@ select relname, relrowsecurity
 select count(*) as total_policies from pg_policies
  where schemaname = 'public';
 
--- =====================================================================
+-- Permissoes de API para app sem Supabase Auth. RLS continua ativa nas 40
+-- tabelas *_fh e as policies validam x-profile-id; o header e spoofavel.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on all tables in schema public to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
+alter default privileges in schema public
+  grant select, insert, update, delete on tables to anon, authenticated;
+alter default privileges in schema public
+  grant usage, select on sequences to anon, authenticated;
+
 -- FH-SQL-007 — Diagnostico somente leitura: casa, dono e membros
 -- Data: 2026-10-24
 -- Objetivo: confirmar no SQL Editor se a casa criada pela aplicacao foi
@@ -1190,7 +1175,7 @@ create table if not exists public.financial_accounts_fh (
   currency         char(3) not null default 'EUR',
   opening_balance  numeric(18,2) not null default 0,
   visibility       text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id         uuid references auth.users (id) on delete set null,
+  owner_id         uuid references public.profiles_fh (id) on delete set null,
   created_by       uuid,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
@@ -1215,7 +1200,7 @@ create table if not exists public.financial_transactions_fh (
   category_id         uuid references public.categories_fh (id) on delete set null,
   date                date not null,
   paid_at             timestamptz,
-  owner_id            uuid references auth.users (id) on delete set null,
+  owner_id            uuid references public.profiles_fh (id) on delete set null,
   created_by          uuid,
   recurrence_id       uuid,
   period_key          text,
@@ -1256,7 +1241,7 @@ create table if not exists public.financial_recurrences_fh (
   end_date         date,
   occurrence_count integer check (occurrence_count is null or occurrence_count > 0),
   active           boolean not null default true,
-  owner_id         uuid references auth.users (id) on delete set null,
+  owner_id         uuid references public.profiles_fh (id) on delete set null,
   created_by       uuid,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
@@ -1343,7 +1328,7 @@ create table if not exists public.financial_goals_fh (
   currency       char(3) not null default 'EUR',
   deadline       date,
   visibility     text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id       uuid references auth.users (id) on delete set null,
+  owner_id       uuid references public.profiles_fh (id) on delete set null,
   created_by     uuid,
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now()
@@ -1412,7 +1397,7 @@ create index if not exists financial_import_rows_fh_import_idx
 create table if not exists public.audit_logs_fh (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households_fh (id) on delete cascade,
-  user_id      uuid not null references auth.users (id) on delete cascade,
+  user_id      uuid not null references public.profiles_fh (id) on delete cascade,
   entity       text not null,
   entity_id    uuid,
   action       text not null,
@@ -1514,144 +1499,144 @@ alter table public.audit_logs_fh enable row level security;
 -- ou dono da casa. (Transferencias e operacoes nao tem visibilidade: sao da casa.)
 drop policy if exists financial_accounts_fh_select on public.financial_accounts_fh;
 create policy financial_accounts_fh_select on public.financial_accounts_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh()));
 drop policy if exists financial_accounts_fh_insert on public.financial_accounts_fh;
 create policy financial_accounts_fh_insert on public.financial_accounts_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists financial_accounts_fh_update on public.financial_accounts_fh;
 create policy financial_accounts_fh_update on public.financial_accounts_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists financial_accounts_fh_delete on public.financial_accounts_fh;
 create policy financial_accounts_fh_delete on public.financial_accounts_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 drop policy if exists financial_transactions_fh_select on public.financial_transactions_fh;
 create policy financial_transactions_fh_select on public.financial_transactions_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id)
-    and (owner_id = auth.uid() or created_by = auth.uid()
+    and (owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh()
       or exists (select 1 from public.financial_accounts_fh a
         where a.id = account_id and a.visibility = 'shared')));
 drop policy if exists financial_transactions_fh_insert on public.financial_transactions_fh;
 create policy financial_transactions_fh_insert on public.financial_transactions_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_transactions_fh_update on public.financial_transactions_fh;
 create policy financial_transactions_fh_update on public.financial_transactions_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_transactions_fh_delete on public.financial_transactions_fh;
 create policy financial_transactions_fh_delete on public.financial_transactions_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 drop policy if exists financial_recurrences_fh_select on public.financial_recurrences_fh;
 create policy financial_recurrences_fh_select on public.financial_recurrences_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists financial_recurrences_fh_insert on public.financial_recurrences_fh;
 create policy financial_recurrences_fh_insert on public.financial_recurrences_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_recurrences_fh_update on public.financial_recurrences_fh;
 create policy financial_recurrences_fh_update on public.financial_recurrences_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_recurrences_fh_delete on public.financial_recurrences_fh;
 create policy financial_recurrences_fh_delete on public.financial_recurrences_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 drop policy if exists financial_transfers_fh_select on public.financial_transfers_fh;
 create policy financial_transfers_fh_select on public.financial_transfers_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists financial_transfers_fh_insert on public.financial_transfers_fh;
 create policy financial_transfers_fh_insert on public.financial_transfers_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_transfers_fh_update on public.financial_transfers_fh;
 create policy financial_transfers_fh_update on public.financial_transfers_fh
-  for update to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_transfers_fh_delete on public.financial_transfers_fh;
 create policy financial_transfers_fh_delete on public.financial_transfers_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 drop policy if exists exchange_operations_fh_select on public.exchange_operations_fh;
 create policy exchange_operations_fh_select on public.exchange_operations_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists exchange_operations_fh_insert on public.exchange_operations_fh;
 create policy exchange_operations_fh_insert on public.exchange_operations_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists exchange_operations_fh_update on public.exchange_operations_fh;
 create policy exchange_operations_fh_update on public.exchange_operations_fh
-  for update to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists exchange_operations_fh_delete on public.exchange_operations_fh;
 create policy exchange_operations_fh_delete on public.exchange_operations_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 drop policy if exists financial_goals_fh_select on public.financial_goals_fh;
 create policy financial_goals_fh_select on public.financial_goals_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh()));
 drop policy if exists financial_goals_fh_insert on public.financial_goals_fh;
 create policy financial_goals_fh_insert on public.financial_goals_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists financial_goals_fh_update on public.financial_goals_fh;
 create policy financial_goals_fh_update on public.financial_goals_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists financial_goals_fh_delete on public.financial_goals_fh;
 create policy financial_goals_fh_delete on public.financial_goals_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 -- Contribuicoes e linhas de importacao seguem a casa do registro-pai.
 drop policy if exists goal_contributions_fh_select on public.goal_contributions_fh;
 create policy goal_contributions_fh_select on public.goal_contributions_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (exists (select 1 from public.financial_goals_fh g
     where g.id = goal_id and public.is_household_member_fh(g.household_id)));
 drop policy if exists goal_contributions_fh_insert on public.goal_contributions_fh;
 create policy goal_contributions_fh_insert on public.goal_contributions_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (exists (select 1 from public.financial_goals_fh g
     where g.id = goal_id and public.is_household_member_fh(g.household_id)));
 drop policy if exists goal_contributions_fh_update on public.goal_contributions_fh;
 create policy goal_contributions_fh_update on public.goal_contributions_fh
-  for update to authenticated
-  using (created_by = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh()
     or exists (select 1 from public.financial_goals_fh g
       where g.id = goal_contributions_fh.goal_id
         and public.is_household_owner_fh(g.household_id)))
@@ -1660,76 +1645,76 @@ create policy goal_contributions_fh_update on public.goal_contributions_fh
       and public.is_household_member_fh(g.household_id)));
 drop policy if exists goal_contributions_fh_delete on public.goal_contributions_fh;
 create policy goal_contributions_fh_delete on public.goal_contributions_fh
-  for delete to authenticated
-  using (created_by = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh()
     or exists (select 1 from public.financial_goals_fh g
       where g.id = goal_contributions_fh.goal_id
         and public.is_household_owner_fh(g.household_id)));
 
 drop policy if exists financial_imports_fh_select on public.financial_imports_fh;
 create policy financial_imports_fh_select on public.financial_imports_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists financial_imports_fh_insert on public.financial_imports_fh;
 create policy financial_imports_fh_insert on public.financial_imports_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_imports_fh_update on public.financial_imports_fh;
 create policy financial_imports_fh_update on public.financial_imports_fh
-  for update to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists financial_imports_fh_delete on public.financial_imports_fh;
 create policy financial_imports_fh_delete on public.financial_imports_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 drop policy if exists financial_import_rows_fh_select on public.financial_import_rows_fh;
 create policy financial_import_rows_fh_select on public.financial_import_rows_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (exists (select 1 from public.financial_imports_fh i
     where i.id = import_id and public.is_household_member_fh(i.household_id)));
 drop policy if exists financial_import_rows_fh_insert on public.financial_import_rows_fh;
 create policy financial_import_rows_fh_insert on public.financial_import_rows_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (exists (select 1 from public.financial_imports_fh i
     where i.id = import_id and public.is_household_member_fh(i.household_id)));
 drop policy if exists financial_import_rows_fh_update on public.financial_import_rows_fh;
 create policy financial_import_rows_fh_update on public.financial_import_rows_fh
-  for update to authenticated
+  for update to anon, authenticated
   using (exists (select 1 from public.financial_imports_fh i
     where i.id = financial_import_rows_fh.import_id
-      and (i.created_by = auth.uid() or public.is_household_owner_fh(i.household_id))))
+      and (i.created_by = public.current_profile_id_fh() or public.is_household_owner_fh(i.household_id))))
   with check (exists (select 1 from public.financial_imports_fh i
     where i.id = financial_import_rows_fh.import_id
       and public.is_household_member_fh(i.household_id)));
 drop policy if exists financial_import_rows_fh_delete on public.financial_import_rows_fh;
 create policy financial_import_rows_fh_delete on public.financial_import_rows_fh
-  for delete to authenticated
+  for delete to anon, authenticated
   using (exists (select 1 from public.financial_imports_fh i
     where i.id = financial_import_rows_fh.import_id
-      and (i.created_by = auth.uid() or public.is_household_owner_fh(i.household_id))));
+      and (i.created_by = public.current_profile_id_fh() or public.is_household_owner_fh(i.household_id))));
 
 -- Cotacoes de referencia: leitura global + da casa; historico imutavel
 -- (sem policies de update/delete: linhas nunca sao alteradas).
 drop policy if exists exchange_rates_fh_select on public.exchange_rates_fh;
 create policy exchange_rates_fh_select on public.exchange_rates_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (household_id is null or public.is_household_member_fh(household_id));
 drop policy if exists exchange_rates_fh_insert on public.exchange_rates_fh;
 create policy exchange_rates_fh_insert on public.exchange_rates_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (household_id is not null and public.is_household_member_fh(household_id));
 
 -- Auditoria: membros leem; cada usuario registra os proprios atos.
 drop policy if exists audit_logs_fh_select on public.audit_logs_fh;
 create policy audit_logs_fh_select on public.audit_logs_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists audit_logs_fh_insert on public.audit_logs_fh;
 create policy audit_logs_fh_insert on public.audit_logs_fh
-  for insert to authenticated
-  with check (user_id = auth.uid() and public.is_household_member_fh(household_id));
+  for insert to anon, authenticated
+  with check (user_id = public.current_profile_id_fh() and public.is_household_member_fh(household_id));
 
 commit;
 
@@ -1823,14 +1808,14 @@ begin;
 create table if not exists public.posts_fh (
   id          uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households_fh (id) on delete cascade,
-  author_id   uuid references auth.users (id) on delete set null,
+  author_id   uuid references public.profiles_fh (id) on delete set null,
   title       text check (title is null or char_length(btrim(title)) between 1 and 120),
   body        text not null check (char_length(btrim(body)) between 1 and 10000),
   memory_date date not null default CURRENT_DATE,
   category_id uuid references public.categories_fh (id) on delete set null,
   tags        text[] not null default '{}',
   visibility  text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id    uuid references auth.users (id) on delete set null,
+  owner_id    uuid references public.profiles_fh (id) on delete set null,
   created_by  uuid,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
@@ -1856,7 +1841,7 @@ create index if not exists post_media_fh_post_idx on public.post_media_fh (post_
 -- 2. Espacos de fotos (5 por usuario)
 -- ---------------------------------------------------------------------
 create table if not exists public.user_photos_fh (
-  user_id      uuid not null references auth.users (id) on delete cascade,
+  user_id      uuid not null references public.profiles_fh (id) on delete cascade,
   slot         integer not null check (slot between 1 and 5),
   storage_path text not null,
   updated_at   timestamptz not null default now(),
@@ -1884,7 +1869,7 @@ create unique index if not exists moods_fh_global_uniq
 
 create table if not exists public.user_moods_fh (
   id           uuid primary key default gen_random_uuid(),
-  user_id      uuid not null references auth.users (id) on delete cascade,
+  user_id      uuid not null references public.profiles_fh (id) on delete cascade,
   household_id uuid not null references public.households_fh (id) on delete cascade,
   mood_id      uuid not null references public.moods_fh (id) on delete restrict,
   note         text check (note is null or char_length(note) <= 280),
@@ -1905,7 +1890,7 @@ create table if not exists public.tips_fh (
   body         text not null check (char_length(btrim(body)) between 1 and 5000),
   category_id  uuid references public.categories_fh (id) on delete set null,
   visibility   text not null default 'shared' check (visibility in ('shared', 'personal')),
-  owner_id     uuid references auth.users (id) on delete set null,
+  owner_id     uuid references public.profiles_fh (id) on delete set null,
   created_by   uuid,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
@@ -1930,7 +1915,7 @@ create index if not exists announcements_fh_household_idx
 
 create table if not exists public.announcement_reads_fh (
   announcement_id uuid not null references public.announcements_fh (id) on delete cascade,
-  user_id         uuid not null references auth.users (id) on delete cascade,
+  user_id         uuid not null references public.profiles_fh (id) on delete cascade,
   read_at         timestamptz not null default now(),
   primary key (announcement_id, user_id)
 );
@@ -1940,7 +1925,7 @@ create table if not exists public.gossip_fh (
   household_id uuid not null references public.households_fh (id) on delete cascade,
   title        text check (title is null or char_length(btrim(title)) between 1 and 120),
   body         text not null check (char_length(btrim(body)) between 1 and 5000),
-  owner_id     uuid references auth.users (id) on delete set null,
+  owner_id     uuid references public.profiles_fh (id) on delete set null,
   created_by   uuid,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
@@ -2003,42 +1988,42 @@ alter table public.gossip_fh enable row level security;
 
 drop policy if exists posts_fh_select on public.posts_fh;
 create policy posts_fh_select on public.posts_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh()));
 drop policy if exists posts_fh_insert on public.posts_fh;
 create policy posts_fh_insert on public.posts_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists posts_fh_update on public.posts_fh;
 create policy posts_fh_update on public.posts_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists posts_fh_delete on public.posts_fh;
 create policy posts_fh_delete on public.posts_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 drop policy if exists post_media_fh_select on public.post_media_fh;
 create policy post_media_fh_select on public.post_media_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (exists (select 1 from public.posts_fh p
     where p.id = post_id and public.is_household_member_fh(p.household_id)
-    and (p.visibility = 'shared' or p.owner_id = auth.uid() or p.created_by = auth.uid())));
+    and (p.visibility = 'shared' or p.owner_id = public.current_profile_id_fh() or p.created_by = public.current_profile_id_fh())));
 drop policy if exists post_media_fh_insert on public.post_media_fh;
 create policy post_media_fh_insert on public.post_media_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (exists (select 1 from public.posts_fh p
     where p.id = post_id and public.is_household_member_fh(p.household_id)));
 drop policy if exists post_media_fh_update on public.post_media_fh;
 create policy post_media_fh_update on public.post_media_fh
-  for update to authenticated
-  using (created_by = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh()
     or exists (select 1 from public.posts_fh p
       where p.id = post_media_fh.post_id
         and public.is_household_owner_fh(p.household_id)))
@@ -2047,8 +2032,8 @@ create policy post_media_fh_update on public.post_media_fh
       and public.is_household_member_fh(p.household_id)));
 drop policy if exists post_media_fh_delete on public.post_media_fh;
 create policy post_media_fh_delete on public.post_media_fh
-  for delete to authenticated
-  using (created_by = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh()
     or exists (select 1 from public.posts_fh p
       where p.id = post_media_fh.post_id
         and public.is_household_owner_fh(p.household_id)));
@@ -2056,139 +2041,139 @@ create policy post_media_fh_delete on public.post_media_fh
 -- Fotos: cada usuario gerencia os proprios 5 espacos; a casa visualiza.
 drop policy if exists user_photos_fh_select on public.user_photos_fh;
 create policy user_photos_fh_select on public.user_photos_fh
-  for select to authenticated
-  using (user_id = auth.uid()
+  for select to anon, authenticated
+  using (user_id = public.current_profile_id_fh()
     or exists (select 1 from public.profiles_fh me
       join public.profiles_fh other on other.household_id = me.household_id
-      where me.id = auth.uid() and other.id = user_photos_fh.user_id
+      where me.id = public.current_profile_id_fh() and other.id = user_photos_fh.user_id
         and me.household_id is not null));
 drop policy if exists user_photos_fh_insert on public.user_photos_fh;
 create policy user_photos_fh_insert on public.user_photos_fh
-  for insert to authenticated
-  with check (user_id = auth.uid());
+  for insert to anon, authenticated
+  with check (user_id = public.current_profile_id_fh());
 drop policy if exists user_photos_fh_update on public.user_photos_fh;
 create policy user_photos_fh_update on public.user_photos_fh
-  for update to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+  for update to anon, authenticated
+  using (user_id = public.current_profile_id_fh())
+  with check (user_id = public.current_profile_id_fh());
 drop policy if exists user_photos_fh_delete on public.user_photos_fh;
 create policy user_photos_fh_delete on public.user_photos_fh
-  for delete to authenticated
-  using (user_id = auth.uid());
+  for delete to anon, authenticated
+  using (user_id = public.current_profile_id_fh());
 
 -- Catalogo de humores: leitura global + da casa; escrita da casa.
 drop policy if exists moods_fh_select on public.moods_fh;
 create policy moods_fh_select on public.moods_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (household_id is null or public.is_household_member_fh(household_id));
 drop policy if exists moods_fh_insert on public.moods_fh;
 create policy moods_fh_insert on public.moods_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (household_id is not null and public.is_household_member_fh(household_id));
 drop policy if exists moods_fh_update on public.moods_fh;
 create policy moods_fh_update on public.moods_fh
-  for update to authenticated
+  for update to anon, authenticated
   using (household_id is not null
-    and (created_by = auth.uid() or public.is_household_owner_fh(household_id)))
+    and (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id)))
   with check (household_id is not null
-    and (created_by = auth.uid() or public.is_household_owner_fh(household_id)));
+    and (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id)));
 drop policy if exists moods_fh_delete on public.moods_fh;
 create policy moods_fh_delete on public.moods_fh
-  for delete to authenticated
+  for delete to anon, authenticated
   using (household_id is not null
-    and (created_by = auth.uid() or public.is_household_owner_fh(household_id)));
+    and (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id)));
 
 -- Registros de humor: visiveis na casa; escrita do proprio usuario.
 drop policy if exists user_moods_fh_select on public.user_moods_fh;
 create policy user_moods_fh_select on public.user_moods_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists user_moods_fh_insert on public.user_moods_fh;
 create policy user_moods_fh_insert on public.user_moods_fh
-  for insert to authenticated
-  with check (user_id = auth.uid() and public.is_household_member_fh(household_id));
+  for insert to anon, authenticated
+  with check (user_id = public.current_profile_id_fh() and public.is_household_member_fh(household_id));
 drop policy if exists user_moods_fh_update on public.user_moods_fh;
 create policy user_moods_fh_update on public.user_moods_fh
-  for update to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid() and public.is_household_member_fh(household_id));
+  for update to anon, authenticated
+  using (user_id = public.current_profile_id_fh())
+  with check (user_id = public.current_profile_id_fh() and public.is_household_member_fh(household_id));
 drop policy if exists user_moods_fh_delete on public.user_moods_fh;
 create policy user_moods_fh_delete on public.user_moods_fh
-  for delete to authenticated
-  using (user_id = auth.uid());
+  for delete to anon, authenticated
+  using (user_id = public.current_profile_id_fh());
 
 drop policy if exists tips_fh_select on public.tips_fh;
 create policy tips_fh_select on public.tips_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid() or created_by = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh() or created_by = public.current_profile_id_fh()));
 drop policy if exists tips_fh_insert on public.tips_fh;
 create policy tips_fh_insert on public.tips_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists tips_fh_update on public.tips_fh;
 create policy tips_fh_update on public.tips_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id)
-    and (visibility = 'shared' or owner_id = auth.uid()));
+    and (visibility = 'shared' or owner_id = public.current_profile_id_fh()));
 drop policy if exists tips_fh_delete on public.tips_fh;
 create policy tips_fh_delete on public.tips_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 drop policy if exists announcements_fh_select on public.announcements_fh;
 create policy announcements_fh_select on public.announcements_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists announcements_fh_insert on public.announcements_fh;
 create policy announcements_fh_insert on public.announcements_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists announcements_fh_update on public.announcements_fh;
 create policy announcements_fh_update on public.announcements_fh
-  for update to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists announcements_fh_delete on public.announcements_fh;
 create policy announcements_fh_delete on public.announcements_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 drop policy if exists announcement_reads_fh_select on public.announcement_reads_fh;
 create policy announcement_reads_fh_select on public.announcement_reads_fh
-  for select to authenticated
-  using (user_id = auth.uid());
+  for select to anon, authenticated
+  using (user_id = public.current_profile_id_fh());
 drop policy if exists announcement_reads_fh_insert on public.announcement_reads_fh;
 create policy announcement_reads_fh_insert on public.announcement_reads_fh
-  for insert to authenticated
-  with check (user_id = auth.uid());
+  for insert to anon, authenticated
+  with check (user_id = public.current_profile_id_fh());
 drop policy if exists announcement_reads_fh_delete on public.announcement_reads_fh;
 create policy announcement_reads_fh_delete on public.announcement_reads_fh
-  for delete to authenticated
-  using (user_id = auth.uid());
+  for delete to anon, authenticated
+  using (user_id = public.current_profile_id_fh());
 
 drop policy if exists gossip_fh_select on public.gossip_fh;
 create policy gossip_fh_select on public.gossip_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists gossip_fh_insert on public.gossip_fh;
 create policy gossip_fh_insert on public.gossip_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id));
 drop policy if exists gossip_fh_update on public.gossip_fh;
 create policy gossip_fh_update on public.gossip_fh
-  for update to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists gossip_fh_delete on public.gossip_fh;
 create policy gossip_fh_delete on public.gossip_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or owner_id = auth.uid()
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or owner_id = public.current_profile_id_fh()
     or public.is_household_owner_fh(household_id));
 
 -- ---------------------------------------------------------------------
@@ -2196,19 +2181,19 @@ create policy gossip_fh_delete on public.gossip_fh
 -- ---------------------------------------------------------------------
 drop policy if exists "media_fh_read" on storage.objects;
 create policy "media_fh_read" on storage.objects
-  for select to authenticated
+  for select to anon, authenticated
   using (bucket_id = 'media_fh'
     and public.is_household_member_fh(((storage.foldername(name))[2])::uuid));
 
 drop policy if exists "media_fh_write" on storage.objects;
 create policy "media_fh_write" on storage.objects
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (bucket_id = 'media_fh'
     and public.is_household_member_fh(((storage.foldername(name))[2])::uuid));
 
 drop policy if exists "media_fh_remove" on storage.objects;
 create policy "media_fh_remove" on storage.objects
-  for delete to authenticated
+  for delete to anon, authenticated
   using (bucket_id = 'media_fh'
     and public.is_household_member_fh(((storage.foldername(name))[2])::uuid));
 
@@ -2308,7 +2293,7 @@ create trigger t_ai_config_fh_updated
 create table if not exists public.ai_conversations_fh (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households_fh (id) on delete cascade,
-  user_id      uuid not null references auth.users (id) on delete cascade,
+  user_id      uuid not null references public.profiles_fh (id) on delete cascade,
   title        text not null default 'Conversa',
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
@@ -2340,7 +2325,7 @@ create index if not exists ai_messages_fh_conversation_idx
 create table if not exists public.ai_memories_fh (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households_fh (id) on delete cascade,
-  user_id      uuid references auth.users (id) on delete cascade,
+  user_id      uuid references public.profiles_fh (id) on delete cascade,
   content      text not null check (char_length(btrim(content)) between 1 and 1000),
   active       boolean not null default true,
   created_by   uuid,
@@ -2362,7 +2347,7 @@ create trigger t_ai_memories_fh_updated
 create table if not exists public.ai_action_logs_fh (
   id              uuid primary key default gen_random_uuid(),
   household_id    uuid not null references public.households_fh (id) on delete cascade,
-  user_id         uuid not null references auth.users (id) on delete cascade,
+  user_id         uuid not null references public.profiles_fh (id) on delete cascade,
   conversation_id uuid references public.ai_conversations_fh (id) on delete set null,
   tool            text not null,
   args            jsonb,
@@ -2408,86 +2393,86 @@ alter table public.automation_webhooks_fh enable row level security;
 
 drop policy if exists ai_conversations_fh_select on public.ai_conversations_fh;
 create policy ai_conversations_fh_select on public.ai_conversations_fh
-  for select to authenticated using (user_id = auth.uid());
+  for select to anon, authenticated using (user_id = public.current_profile_id_fh());
 drop policy if exists ai_conversations_fh_insert on public.ai_conversations_fh;
 create policy ai_conversations_fh_insert on public.ai_conversations_fh
-  for insert to authenticated
-  with check (user_id = auth.uid() and public.is_household_member_fh(household_id));
+  for insert to anon, authenticated
+  with check (user_id = public.current_profile_id_fh() and public.is_household_member_fh(household_id));
 drop policy if exists ai_conversations_fh_update on public.ai_conversations_fh;
 create policy ai_conversations_fh_update on public.ai_conversations_fh
-  for update to authenticated
-  using (user_id = auth.uid()) with check (user_id = auth.uid());
+  for update to anon, authenticated
+  using (user_id = public.current_profile_id_fh()) with check (user_id = public.current_profile_id_fh());
 drop policy if exists ai_conversations_fh_delete on public.ai_conversations_fh;
 create policy ai_conversations_fh_delete on public.ai_conversations_fh
-  for delete to authenticated using (user_id = auth.uid());
+  for delete to anon, authenticated using (user_id = public.current_profile_id_fh());
 
 drop policy if exists ai_messages_fh_select on public.ai_messages_fh;
 create policy ai_messages_fh_select on public.ai_messages_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (exists (select 1 from public.ai_conversations_fh c
-    where c.id = conversation_id and c.user_id = auth.uid()));
+    where c.id = conversation_id and c.user_id = public.current_profile_id_fh()));
 drop policy if exists ai_messages_fh_insert on public.ai_messages_fh;
 create policy ai_messages_fh_insert on public.ai_messages_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (exists (select 1 from public.ai_conversations_fh c
-    where c.id = conversation_id and c.user_id = auth.uid()));
+    where c.id = conversation_id and c.user_id = public.current_profile_id_fh()));
 drop policy if exists ai_messages_fh_update on public.ai_messages_fh;
 create policy ai_messages_fh_update on public.ai_messages_fh
-  for update to authenticated
+  for update to anon, authenticated
   using (exists (select 1 from public.ai_conversations_fh c
-    where c.id = ai_messages_fh.conversation_id and c.user_id = auth.uid()))
+    where c.id = ai_messages_fh.conversation_id and c.user_id = public.current_profile_id_fh()))
   with check (exists (select 1 from public.ai_conversations_fh c
-    where c.id = ai_messages_fh.conversation_id and c.user_id = auth.uid()));
+    where c.id = ai_messages_fh.conversation_id and c.user_id = public.current_profile_id_fh()));
 drop policy if exists ai_messages_fh_delete on public.ai_messages_fh;
 create policy ai_messages_fh_delete on public.ai_messages_fh
-  for delete to authenticated
+  for delete to anon, authenticated
   using (exists (select 1 from public.ai_conversations_fh c
-    where c.id = ai_messages_fh.conversation_id and c.user_id = auth.uid()));
+    where c.id = ai_messages_fh.conversation_id and c.user_id = public.current_profile_id_fh()));
 
 drop policy if exists ai_memories_fh_select on public.ai_memories_fh;
 create policy ai_memories_fh_select on public.ai_memories_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists ai_memories_fh_insert on public.ai_memories_fh;
 create policy ai_memories_fh_insert on public.ai_memories_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_member_fh(household_id)
-    and (user_id is null or user_id = auth.uid()));
+    and (user_id is null or user_id = public.current_profile_id_fh()));
 drop policy if exists ai_memories_fh_update on public.ai_memories_fh;
 create policy ai_memories_fh_update on public.ai_memories_fh
-  for update to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id))
+  for update to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id))
   with check (public.is_household_member_fh(household_id));
 drop policy if exists ai_memories_fh_delete on public.ai_memories_fh;
 create policy ai_memories_fh_delete on public.ai_memories_fh
-  for delete to authenticated
-  using (created_by = auth.uid() or public.is_household_owner_fh(household_id));
+  for delete to anon, authenticated
+  using (created_by = public.current_profile_id_fh() or public.is_household_owner_fh(household_id));
 
 drop policy if exists ai_action_logs_fh_select on public.ai_action_logs_fh;
 create policy ai_action_logs_fh_select on public.ai_action_logs_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists ai_action_logs_fh_insert on public.ai_action_logs_fh;
 create policy ai_action_logs_fh_insert on public.ai_action_logs_fh
-  for insert to authenticated
-  with check (user_id = auth.uid() and public.is_household_member_fh(household_id));
+  for insert to anon, authenticated
+  with check (user_id = public.current_profile_id_fh() and public.is_household_member_fh(household_id));
 
 drop policy if exists automation_webhooks_fh_select on public.automation_webhooks_fh;
 create policy automation_webhooks_fh_select on public.automation_webhooks_fh
-  for select to authenticated
+  for select to anon, authenticated
   using (public.is_household_member_fh(household_id));
 drop policy if exists automation_webhooks_fh_insert on public.automation_webhooks_fh;
 create policy automation_webhooks_fh_insert on public.automation_webhooks_fh
-  for insert to authenticated
+  for insert to anon, authenticated
   with check (public.is_household_owner_fh(household_id));
 drop policy if exists automation_webhooks_fh_update on public.automation_webhooks_fh;
 create policy automation_webhooks_fh_update on public.automation_webhooks_fh
-  for update to authenticated
+  for update to anon, authenticated
   using (public.is_household_owner_fh(household_id))
   with check (public.is_household_owner_fh(household_id));
 drop policy if exists automation_webhooks_fh_delete on public.automation_webhooks_fh;
 create policy automation_webhooks_fh_delete on public.automation_webhooks_fh
-  for delete to authenticated
+  for delete to anon, authenticated
   using (public.is_household_owner_fh(household_id));
 
 commit;
@@ -2540,7 +2525,7 @@ select count(*) as config_policies from pg_policies
 -- Objetivo: guardar endpoints de push (Web Push) por usuario para entrega
 --           futura via backend/n8n. A entrega em si depende de chave VAPID
 --           e worker de push no servidor (Fase 7 ou n8n).
--- Dependencias: nenhuma alem de auth.users.
+-- Dependencias: profiles_fh.
 --
 -- Objetos: push_subscriptions_fh (user_id, endpoint unico, keys jsonb).
 -- RLS: leitura/insercao/exclusao do proprio usuario (sem update: para
@@ -2553,7 +2538,7 @@ select count(*) as config_policies from pg_policies
 begin;
 
 create table if not exists public.push_subscriptions_fh (
-  user_id    uuid not null references auth.users (id) on delete cascade,
+  user_id    uuid not null references public.profiles_fh (id) on delete cascade,
   endpoint   text not null,
   keys       jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
@@ -2564,15 +2549,15 @@ alter table public.push_subscriptions_fh enable row level security;
 
 drop policy if exists push_subscriptions_fh_select on public.push_subscriptions_fh;
 create policy push_subscriptions_fh_select on public.push_subscriptions_fh
-  for select to authenticated using (user_id = auth.uid());
+  for select to anon, authenticated using (user_id = public.current_profile_id_fh());
 
 drop policy if exists push_subscriptions_fh_insert on public.push_subscriptions_fh;
 create policy push_subscriptions_fh_insert on public.push_subscriptions_fh
-  for insert to authenticated with check (user_id = auth.uid());
+  for insert to anon, authenticated with check (user_id = public.current_profile_id_fh());
 
 drop policy if exists push_subscriptions_fh_delete on public.push_subscriptions_fh;
 create policy push_subscriptions_fh_delete on public.push_subscriptions_fh
-  for delete to authenticated using (user_id = auth.uid());
+  for delete to anon, authenticated using (user_id = public.current_profile_id_fh());
 
 commit;
 

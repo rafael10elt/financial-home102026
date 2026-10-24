@@ -34,36 +34,55 @@ export async function fetchHousehold(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<{ data: Household | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('households_fh')
-    .select('id, name, join_code, created_by, created_at')
-    .eq('created_by', userId)
-    .maybeSingle()
-
-  if (error) {
-    const { data: byMember, error: memberError } = await supabase
-      .from('household_members_fh')
-      .select('households_fh!inner(id, name, join_code, created_by, created_at)')
-      .eq('user_id', userId)
-      .limit(1)
-      .maybeSingle()
-    if (memberError) return { data: null, error: mapError(memberError.message) }
-    const row = (byMember as { households_fh: Household } | null)?.households_fh ?? null
-    return { data: row, error: null }
-  }
-
-  if (data) return { data, error: null }
-
   const { data: byMember, error: memberError } = await supabase
     .from('household_members_fh')
     .select('households_fh!inner(id, name, join_code, created_by, created_at)')
     .eq('user_id', userId)
+    .order('joined_at', { ascending: true })
     .limit(1)
     .maybeSingle()
 
   if (memberError) return { data: null, error: mapError(memberError.message) }
-  const row = (byMember as { households_fh: Household } | null)?.households_fh ?? null
-  return { data: row, error: null }
+  const memberRow = byMember as { households_fh: Household | Household[] | null } | null
+  const joinedHouse = Array.isArray(memberRow?.households_fh)
+    ? memberRow.households_fh[0]
+    : memberRow?.households_fh
+  if (joinedHouse) return { data: joinedHouse, error: null }
+
+  // profiles_fh é a fonte de associação singular mantida também pelas funções
+  // de criar/entrar. Use-a como fallback para recuperar a casa após a entrada.
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles_fh')
+    .select('household_id')
+    .eq('id', userId)
+    .maybeSingle()
+  if (profileError) return { data: null, error: mapError(profileError.message) }
+  if (!profile?.household_id) return { data: null, error: null }
+
+  const { data: household, error: householdError } = await supabase
+    .from('households_fh')
+    .select('id, name, join_code, created_by, created_at')
+    .eq('id', profile.household_id)
+    .maybeSingle()
+  if (householdError) return { data: null, error: mapError(householdError.message) }
+  return { data: household, error: null }
+}
+
+export async function renameHousehold(
+  supabase: SupabaseClient,
+  householdId: string,
+  ownerId: string,
+  name: string,
+): Promise<{ error: string | null }> {
+  const { data, error } = await supabase
+    .from('households_fh')
+    .update({ name: name.trim() })
+    .eq('id', householdId)
+    .eq('created_by', ownerId)
+    .select('id')
+    .maybeSingle()
+  if (error) return { error: mapError(error.message) }
+  return data ? { error: null } : { error: 'A casa não foi atualizada. Verifique se este perfil é administrador.' }
 }
 
 export async function fetchMembers(

@@ -1,15 +1,18 @@
 import { createContext, useContext } from 'react'
-import type { Session, SupabaseClient, User } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+export type LocalProfile = {
+  id: string
+  email: string | null
+  user_metadata: { display_name: string }
+}
 
 export type AuthStatus = 'unconfigured' | 'loading' | 'authenticated' | 'anonymous'
 
 export type AuthContextValue = {
   status: AuthStatus
-  session: Session | null
-  user: User | null
+  user: LocalProfile | null
   supabase: SupabaseClient | null
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>
-  signUp: (email: string, password: string, displayName: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
   selectProfile: (name: string) => Promise<{ error: string | null }>
   profileName: string | null

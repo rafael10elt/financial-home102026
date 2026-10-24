@@ -44,17 +44,20 @@ function functionsBase(): string | null {
 }
 
 async function callFunction<T>(
-  supabase: { auth: { getSession: () => Promise<{ data: { session: { access_token: string } | null } }> } },
+  profileId: string,
   path: string,
   body: unknown,
 ): Promise<{ data: T | null; status: number }> {
   const base = functionsBase()
   if (!base) throw new Error('FUNCTIONS_UNCONFIGURED')
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token ?? ''
   const response = await fetch(`${base}/${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: {
+      'content-type': 'application/json',
+      apikey: env.supabaseAnonKey,
+      Authorization: `Bearer ${env.supabaseAnonKey}`,
+      'x-profile-id': profileId,
+    },
     body: JSON.stringify(body),
   })
   try {
@@ -162,7 +165,7 @@ export function useAssistantData() {
       void (async () => {
         try {
           const { data } = await callFunction<{ configured?: boolean; key_last4?: string; model?: string; error?: string }>(
-            supabase,
+            user.id,
             'groq-config',
             { action: 'status', household_id: householdId },
           )
@@ -216,7 +219,7 @@ export function useAssistantData() {
         confirmations?: PendingConfirmation[]
         executed?: string
         error?: string
-      }>(supabase, 'groq-chat', { conversation_id: conversationId, message: text })
+      }>(user.id, 'groq-chat', { conversation_id: conversationId, message: text })
       if (!data || status >= 500) return { ok: false, code: data?.error ?? 'GROQ_UNAVAILABLE' }
       if (data.error) return { ok: false, code: data.error }
       const reply: Message = {
@@ -245,7 +248,7 @@ export function useAssistantData() {
     setSending(true)
     try {
       const { data } = await callFunction<{ reply?: string; executed?: string; error?: string }>(
-        supabase,
+        user?.id ?? '',
         'groq-chat',
         { conversation_id: activeId, confirm_action_id: actionId },
       )

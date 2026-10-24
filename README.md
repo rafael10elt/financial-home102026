@@ -11,8 +11,7 @@ Documentos de controle (obrigatórios e cumulativos):
 ## Requisitos
 
 - Node.js 20+ (testado com Node 24) e npm 11+.
-- Projeto Supabase (gratuito) para sessões anônimas e banco. Ative o provedor
-  **Anonymous Sign-Ins** em Authentication → Sign In / Providers.
+- Projeto Supabase (Postgres + Storage). Não é preciso configurar Supabase Auth.
 - Conta Netlify + GitHub para deploy (Fase 7).
 
 ## Instalação
@@ -31,7 +30,7 @@ Sem `.env` válido a aplicação abre mostrando o estado real
 | Variável | Obrigatória | Onde vive | Descrição |
 |---|---|---|---|
 | `VITE_SUPABASE_URL` | sim | frontend | URL do projeto Supabase (pública) |
-| `VITE_SUPABASE_ANON_KEY` | sim | frontend | chave `anon` pública, protegida por RLS |
+| `VITE_SUPABASE_ANON_KEY` | sim | frontend | chave pública do projeto; políticas RLS aceitam o perfil selecionado pelo app |
 | `VITE_PROFILES` | não | frontend | nomes separados por vírgula na tela de seleção; padrão `Jéssica,Rafael` |
 | `GROQ_API_KEY` | depois (F5) | **somente backend** | chave Groq; nunca com prefixo `VITE_` |
 | `GROQ_ENC_KEY` | opcional (F5) | **somente backend** | chave de criptografia de 32 bytes para armazenar chave Groq por casa |
@@ -53,20 +52,30 @@ Nenhum segredo é aceito no bundle do frontend.
 ## Banco de dados
 
 1. Abra o Supabase SQL Editor.
-2. Revise os blocos de banco necessários em `banco.sql`.
-3. Execute o FH-SQL-001 uma única vez; blocos posteriores são migrações incrementais.
-4. Rode as consultas de validação descritas no próprio bloco.
-5. (Opcional) `supabase/migrations/` espelha os blocos para uso com CLI.
+2. Para uma instalação nova, cole e execute o conteúdo completo do `banco.sql`.
+   O arquivo cria o esquema, as políticas RLS e os perfis Jéssica e Rafael.
+3. Rode as consultas de validação descritas no próprio arquivo.
 
 Nada é executado automaticamente no Supabase pelo projeto.
 
 ### Entrada por perfil
 
-Na tela inicial, escolha um nome. O app cria uma sessão Supabase anônima por
-perfil e navegador; não há senha, mas cada perfil recebe um `auth.uid()` próprio
-para manter os registros e o RLS. Habilite Anonymous Sign-Ins no painel do
-Supabase. Apagar os dados do navegador também apaga as sessões locais; nesse
-caso, será criada uma nova identidade e será necessário entrar na casa novamente.
+Na tela inicial, escolha um nome. O app consulta a linha correspondente em
+`profiles_fh` e guarda o UUID localmente; não chama Supabase Auth. O SQL inicial
+cria Jéssica e Rafael. Para adicionar perfis, insira uma linha em `profiles_fh`
+e adicione o nome em `VITE_PROFILES`.
+
+Depois de apagar o banco, rode o arquivo `banco.sql` inteiro uma única vez.
+Não é necessário habilitar provedores, criar usuários ou executar um SQL extra.
+Confira se `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` apontam para o mesmo
+projeto em que o SQL foi executado. Para instalação/recriação, use `banco.sql`;
+os arquivos antigos em `supabase/migrations/` ainda descrevem o fluxo anterior
+com Supabase Auth e não devem ser aplicados neste setup simplificado.
+
+**Atenção:** esse método é identificação simples, não autenticação segura. O
+navegador envia o UUID do perfil em `x-profile-id`, e o banco usa esse valor nas
+políticas RLS; qualquer pessoa pode alterá-lo e assumir outro perfil. Use apenas
+na rede e no grupo interno pretendidos, sem dados que exijam controle de acesso.
 
 ## Deploy (Netlify)
 

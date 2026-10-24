@@ -3,6 +3,13 @@ import { env, isSupabaseConfigured } from '../config/env'
 
 let client: SupabaseClient | null = null
 
+/** Seleciona o perfil de uso local; não cria nem mantém uma sessão Supabase Auth. */
+export function activateProfile(profileId: string | null): void {
+  if (profileId) localStorage.setItem('fh.active-profile-id', profileId)
+  else localStorage.removeItem('fh.active-profile-id')
+  client = null
+}
+
 /**
  * Retorna o cliente Supabase ou `null` quando o ambiente não está configurado.
  * A UI deve mostrar o estado real de "não configurado" em vez de simular acesso.
@@ -11,10 +18,15 @@ export function getSupabase(): SupabaseClient | null {
   if (!isSupabaseConfigured()) return null
   if (!client) {
     client = createClient(env.supabaseUrl, env.supabaseAnonKey, {
+      global: {
+        headers: localStorage.getItem('fh.active-profile-id')
+          ? { 'x-profile-id': localStorage.getItem('fh.active-profile-id')! }
+          : {},
+      },
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
       },
     })
   }

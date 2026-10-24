@@ -1038,7 +1038,7 @@ depender de temp table) + etapa 3b de prova (B enxerga 1 linha). A etapa 2
 passou a exibir `id, name, join_code` direto, sem temp table.
 ## Rodada 012 — Entrada simplificada por perfil
 
-**Data:** 2026-10-24  
+**Data:** 2026-10-24
 **Objetivo:** reduzir atrito na entrada e aproveitar a autenticação/RLS e os
 módulos existentes, sem expor tabelas ao papel `anon`.
 
@@ -1086,7 +1086,7 @@ módulos existentes, sem expor tabelas ao papel `anon`.
 
 ## Rodada 013 — Sessões por perfil, convite, tema e uso seguro do Groq
 
-**Data:** 2026-10-24  
+**Data:** 2026-10-24
 **Objetivo:** corrigir a perda aparente da casa ao sair, explicar/mostrar o
 código de convite, dar acesso rápido ao tema e encaminhar `GROQ_API_KEY` pelo
 backend seguro.
@@ -1137,7 +1137,7 @@ backend seguro.
 
 ## Rodada 014 — Persistência da casa e padrão de modais/toasts
 
-**Data:** 2026-10-24  
+**Data:** 2026-10-24
 **Objetivo:** investigar a casa que parecia desaparecer após sair e estabelecer
 modais para confirmações e toasts para notificações.
 
@@ -1170,3 +1170,143 @@ modais para confirmações e toasts para notificações.
 - Após a atualização, se ainda aparecer “não foi possível verificar”, a tela
   mostrará o erro concreto da consulta em vez de sugerir criar outra casa.
 
+## Rodada 015 — Carregamento confiável e prevenção de casas duplicadas
+
+**Data:** 2026-10-24  
+**Objetivo:** corrigir a situação em que o navegador oferece criar novamente,
+apesar de já existir uma casa associada ao perfil no Supabase.
+
+### Diagnóstico e mudanças
+
+- As capturas do Supabase mostram uma casa, um membro `owner` e o perfil Rafael
+  apontando para o mesmo `household_id`. A persistência da casa está confirmada;
+  a tela de onboarding indica que o navegador não está recuperando/consultando
+  essa associação com a identidade correta.
+- `src/auth/AuthProvider.tsx`: a resposta assíncrona de `getSession()` não pode
+  mais substituir uma sessão mais recente já recebida por `onAuthStateChange`.
+  Isso fecha uma corrida na restauração/inicialização do login por perfil.
+- `src/household/HouseholdProvider.tsx`: antes de criar, reconsulta a casa do
+  perfil. Se encontrar vínculo, impede a inserção duplicada e mantém a casa
+  existente; se a consulta falhar, também interrompe a criação e informa o erro.
+
+### Banco e verificação
+
+- Nenhuma alteração de schema é necessária; `banco.sql` não mudou e não é
+  necessário executar SQL no Supabase para este ajuste.
+- `npm run build`: passou (TypeScript + Vite); permanece o aviso do chunk inicial
+  acima de 500 kB. Após atualizar o navegador, selecionar
+  Rafael no mesmo navegador em que a sessão foi usada deve recuperar o vínculo.
+  Se ainda não houver vínculo para a sessão ativa, o formulário de criação não
+  deve duplicar a casa sem antes concluir a verificação.
+
+## Rodada 016 — Busca pelo perfil e gerenciamento da casa
+
+**Data:** 2026-10-24  
+**Objetivo:** usar o código de convite com clareza e apresentar os dados da casa
+em Configurações.
+
+### Mudanças
+
+- `src/household/service.ts`: a recuperação da casa agora consulta primeiro a
+  associação em `household_members_fh` e depois `profiles_fh.household_id`, que
+  as capturas mostram preenchido. Isso reduz dependência de encontrar a casa pela
+  autoria e cobre o vínculo singular salvo no perfil.
+- `src/features/settings/HouseholdSettingsSection.tsx`: nova seção em
+  Configurações mostra nome, código de convite, membros e papéis; o código pode
+  ser copiado com toast e o criador pode renomear a casa por modal.
+- A estrutura atual relaciona cada perfil a uma casa ativa (`profiles_fh` tem um
+  `household_id`). A nova seção administra a casa do perfil atual; várias casas
+  selecionáveis por perfil exigiriam ampliar o modelo e revisar o escopo de todos
+  os módulos que filtram dados por casa.
+
+### Banco e verificação
+
+- Nenhuma alteração de banco necessária; `banco.sql` não mudou.
+- `npm run build`: passou (TypeScript + Vite); permanece o aviso do chunk inicial
+  acima de 500 kB. Não há comando SQL a executar.
+
+## Rodada 017 — Contas permanentes por perfil e migração do Anonymous Auth
+
+**Data:** 2026-10-24  
+**Objetivo:** substituir identidades anônimas descartáveis por contas estáveis
+para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
+
+### Decisão e implementação
+
+- `src/auth/AuthProvider.tsx`: nomes são convertidos em e-mails sintéticos
+  estáveis (`jessica@financial.home`, `rafael@financial.home`). A senha é derivada
+  com SHA-256 de uma semente estável e slug do perfil; a seleção tenta
+  `signInWithPassword` primeiro e faz `signUp` apenas quando as credenciais ainda
+  não existem. Sessões continuam sob gerenciamento nativo do Supabase; foram
+  removidos `signInAnonymously` e caches JSON `fh.auth.profile.*`.
+- `src/features/auth/LoginPage.tsx`: os cartões continuam sendo o único passo
+  necessário para escolher um perfil; carregamento e erros seguem visíveis.
+- `.env.example`, `src/vite-env.d.ts` e `README.md`: documentam
+  `VITE_PROFILE_AUTH_SECRET`, que deve permanecer idêntico. Como é frontend, não
+  é segredo. A solução mantém RLS por `auth.uid()`, mas o seletor sem senha não
+  autentica a pessoa: qualquer usuário do app pode derivar as credenciais e
+  assumir qualquer perfil. Limite aceito para este uso interno de baixa segurança.
+- `banco.sql`: FH-SQL-008 fornece prévia e DELETE opcional somente para contas
+  Anonymous Auth sem casa, sem membership e que não criaram uma casa; FH-SQL-009
+  permite promover uma conta permanente já associada à casa antiga. Não executei
+  nenhum SQL no Supabase. O DELETE é comentado e exige revisão dos candidatos.
+
+### Migração e configuração necessárias
+
+- No Supabase, habilitar o provedor Email e desabilitar confirmação de e-mail
+  para as contas sintéticas (não recebem mensagens). Anonymous Sign-Ins deixa de
+  ser necessário, mas usuários legados não são apagados automaticamente.
+- As contas permanentes terão UUIDs novos. Entre com os perfis novos e associe-os
+  à casa existente pelo código. Se o antigo dono era anônimo, execute FH-SQL-009
+  após a entrada, substituindo o ID da casa e e-mail permanente. Só então revise
+  os candidatos FH-SQL-008 e, se apropriado, execute seu DELETE.
+- `banco.sql` ganhou FH-SQL-008/009; não há alteração de schema nem policy RLS.
+
+### Verificação
+
+- `npm run build`: passou (TypeScript + Vite); permanece o aviso de chunk maior
+  que 500 kB. Nenhuma suíte de testes foi executada.
+- Pendente no projeto Supabase: confirmar Email habilitado e confirmação
+  desabilitada; testar criação/entrada das duas contas e validar UUID único estável.
+
+## Rodada 018 — Orientação para provedor Email desativado
+
+**Data:** 2026-10-24
+
+- A captura do navegador mostra `Email logins are disabled` (HTTP 422), erro de
+  configuração do Supabase Auth, não erro de schema criado por `banco.sql`.
+- `src/auth/AuthProvider.tsx`: a mensagem agora orienta a habilitar Email em
+  Authentication → Sign In / Providers.
+- `README.md`: documenta habilitar Email e desligar Confirm email para as contas
+  internas que usam endereços sintéticos. Não requer SQL.
+- `npm run build`: passou (TypeScript + Vite); permanece o aviso do chunk
+  inicial acima de 500 kB. Nenhuma alteração de banco foi feita.
+
+## Rodada 019 — Identificação local em profiles_fh (sem Supabase Auth)
+
+**Data:** 2026-10-24
+
+- Pedido: simplificar a entrada, removendo a dependência de Supabase Auth e
+  preparar `banco.sql` para recriação integral do banco.
+- `src/auth/AuthProvider.tsx` e `src/supabase/client.ts`: selecionar os perfis
+  permanentes Jéssica/Rafael de `profiles_fh`; guardar o UUID no navegador e
+  enviá-lo como `x-profile-id`. Não são criados usuários/sessões de Supabase
+  Auth. Logout limpa identificação e dados temporários e preserva preferências.
+- `banco.sql`: perfis fixos com UUIDs estáveis; FKs apontam para
+  `profiles_fh`; helper `current_profile_id_fh()` lê o cabeçalho; funções de
+  casa e policies RLS aceitam o papel `anon`. Nenhum Auth provider precisa ser
+  habilitado. O arquivo completo é para executar uma vez em um projeto/banco
+  limpo depois de apagar as tabelas do app.
+- Funções Edge usam o mesmo cabeçalho para identificar o perfil. As rotas
+  Supabase Functions ainda passam o anon key público para o gateway.
+- Limite conhecido: qualquer pessoa com acesso ao app pode forjar `x-profile-id`
+  e assumir Jéssica ou Rafael. Isso atende à baixa segurança pedida, mas não deve
+  ser usado para dados que precisem de controle de acesso real.
+- `.env.example`: removidos valores de chave que não devem estar no modelo
+  versionado. Se a chave Groq mostrada anteriormente nesse arquivo estiver
+  ativa, revogue-a e gere uma nova na Groq; não registrar o valor novo no Git.
+- `README.md`: instruções claras de instalação limpa; nenhum SQL separado é
+  necessário além do `banco.sql` completo.
+- Verificação: `npm run build` passou (TypeScript + Vite); aviso existente de
+  chunk inicial acima de 500 kB. Nenhum SQL foi executado no Supabase. O usuário
+  deve executar o arquivo completo no SQL Editor depois de limpar o banco.

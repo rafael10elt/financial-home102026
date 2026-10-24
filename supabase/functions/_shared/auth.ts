@@ -1,9 +1,9 @@
-// Autenticação das Edge Functions: valida o JWT do chamador e devolve
-// o usuário + um cliente Supabase com o token dele (RLS = usuário).
-import { createClient, type SupabaseClient, type User } from 'https://esm.sh/@supabase/supabase-js@2'
+// Identificação interna por perfil. O UUID enviado pelo cliente é spoofável;
+// usado apenas no app doméstico de baixa segurança.
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 export type AuthContext = {
-  user: User
+  user: { id: string; user_metadata: { display_name: string } }
   userClient: SupabaseClient
   serviceClient: SupabaseClient
 }
@@ -16,21 +16,22 @@ export function serviceClient(): SupabaseClient {
 }
 
 export async function requireUser(request: Request): Promise<AuthContext> {
-  const header = request.headers.get('Authorization') ?? ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
-  if (!token) throw new HttpError(401, 'NO_SESSION')
-
-  const url = Deno.env.get('SUPABASE_URL') ?? ''
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
-  if (!url || !anonKey) throw new Error('Segredos do Supabase ausentes na função.')
-
-  const userClient = createClient(url, anonKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false },
-  })
-  const { data, error } = await userClient.auth.getUser()
-  if (error || !data.user) throw new HttpError(401, 'NO_SESSION')
-  return { user: data.user, userClient, serviceClient: serviceClient() }
+  const profileId = request.headers.get('x-profile-id') ?? ''
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(profileId)) {
+    throw new HttpError(401, 'PROFILE_REQUIRED')
+  }
+  const service = serviceClient()
+  const { data, error } = await service
+    .from('profiles_fh')
+    .select('id, display_name')
+    .eq('id', profileId)
+    .maybeSingle()
+  if (error || !data) throw new HttpError(401, 'PROFILE_NOT_FOUND')
+  return {
+    user: { id: data.id, user_metadata: { display_name: data.display_name } },
+    userClient: service,
+    serviceClient: service,
+  }
 }
 
 export class HttpError extends Error {
@@ -49,7 +50,7 @@ export function jsonResponse(body: unknown, status = 200): Response {
     headers: {
       'content-type': 'application/json',
       'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'authorization, content-type',
+      'access-control-allow-headers': 'authorization, apikey, content-type, x-profile-id',
       'access-control-allow-methods': 'POST, OPTIONS',
     },
   })

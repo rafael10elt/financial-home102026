@@ -12,6 +12,7 @@ import { Button } from '../../ui/Button'
 import { cn } from '../../lib/cn'
 import { GroqKeySection } from './GroqKeySection'
 import { SyncSection } from './SyncSection'
+import { HouseholdSettingsSection } from './HouseholdSettingsSection'
 
 function ChoiceGroup<T extends string>({
   label,
@@ -105,6 +106,8 @@ export function SettingsPage() {
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold">{t('settings.title')}</h1>
 
+      <HouseholdSettingsSection />
+
       <Card>
         <CardTitle className="mb-4">{t('settings.appearance')}</CardTitle>
         <div className="flex flex-col gap-5">
@@ -163,7 +166,7 @@ export function SettingsPage() {
 
       <Card>
         <CardTitle className="mb-1">{t('settings.account')}</CardTitle>
-        <CardDescription>{user?.email ?? '—'}</CardDescription>
+        <CardDescription>{user?.user_metadata.display_name ?? '—'}</CardDescription>
       </Card>
 
       <GroqKeySection onChanged={() => undefined} />

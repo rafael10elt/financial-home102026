@@ -1,159 +1,65 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Session } from '@supabase/supabase-js'
-import { getSupabase } from '../supabase/client'
-import { AuthContext, type AuthContextValue, type AuthStatus } from './context'
-
-function mapAuthError(error: { message: string } | null): string | null {
-  if (!error) return null
-  const message = error.message.trim()
-  if (/invalid login credentials/i.test(message)) return 'Credenciais inválidas.'
-  if (/email not confirmed/i.test(message)) return 'E-mail ainda não confirmado.'
-  if (/already registered/i.test(message)) return 'Este e-mail já está cadastrado.'
-  if (/password should be at least/i.test(message)) return 'A senha é muito curta.'
-  if (/rate limit/i.test(message)) return 'Muitas tentativas. Aguarde alguns minutos.'
-  return message
-}
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { activateProfile, getSupabase } from '../supabase/client'
+import { AuthContext, type AuthContextValue, type AuthStatus, type LocalProfile } from './context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const supabase = getSupabase()
-  const [session, setSession] = useState<Session | null>(null)
-  const [status, setStatus] = useState<AuthStatus>(supabase ? 'loading' : 'unconfigured')
+  const savedId = localStorage.getItem('fh.active-profile-id')
+  const [user, setUser] = useState<LocalProfile | null>(null)
+  const [status, setStatus] = useState<AuthStatus>(supabase ? (savedId ? 'loading' : 'anonymous') : 'unconfigured')
   const [profileName, setProfileName] = useState<string | null>(() => localStorage.getItem('fh.active-profile'))
-  const initialized = useRef(false)
-  const switchingProfile = useRef(false)
 
   useEffect(() => {
-    if (!supabase) return
+    if (!supabase || !savedId) return
     let cancelled = false
-
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
+    void supabase.from('profiles_fh').select('id, display_name').eq('id', savedId).maybeSingle()
+      .then(({ data, error }) => {
         if (cancelled) return
-        setSession(data.session)
-        setStatus(data.session ? 'authenticated' : 'anonymous')
+        if (error || !data) {
+          activateProfile(null)
+          localStorage.removeItem('fh.active-profile')
+          setProfileName(null)
+          setStatus('anonymous')
+          return
+        }
+        const profile: LocalProfile = {
+          id: data.id,
+          email: null,
+          user_metadata: { display_name: data.display_name },
+        }
+        setUser(profile)
+        setProfileName(data.display_name)
+        localStorage.setItem('fh.active-profile', data.display_name)
+        setStatus('authenticated')
       })
-      .catch(() => {
-        if (!cancelled) setStatus('anonymous')
-      })
-      .finally(() => {
-        initialized.current = true
-      })
-
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-      setStatus(nextSession ? 'authenticated' : 'anonymous')
-      const active = localStorage.getItem('fh.active-profile')
-      if (!switchingProfile.current && active && nextSession) {
-        localStorage.setItem(`fh.auth.profile.${active.toLocaleLowerCase('pt-BR')}`, JSON.stringify(nextSession))
-      }
-    })
-
-    return () => {
-      cancelled = true
-      subscription.subscription.unsubscribe()
-    }
-  }, [supabase])
-
-  const signIn = useCallback<AuthContextValue['signIn']>(
-    async (email, password) => {
-      if (!supabase) return { error: 'Supabase não configurado.' }
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      return { error: mapAuthError(error) }
-    },
-    [supabase],
-  )
+    return () => { cancelled = true }
+  }, [supabase, savedId])
 
   const selectProfile = useCallback<AuthContextValue['selectProfile']>(async (name) => {
     if (!supabase) return { error: 'Supabase não configurado.' }
     const normalized = name.trim()
-    if (!normalized) return { error: 'Escolha um perfil válido.' }
-    const activeBeforeSwitch = localStorage.getItem('fh.active-profile')
-    switchingProfile.current = true
-    try {
-      const { data: currentSession } = await supabase.auth.getSession()
-      if (currentSession.session && activeBeforeSwitch) {
-        localStorage.setItem(
-          `fh.auth.profile.${activeBeforeSwitch.toLocaleLowerCase('pt-BR')}`,
-          JSON.stringify(currentSession.session),
-        )
-      }
-      // Cada perfil mantém uma sessão anônima própria neste navegador. Assim,
-      // o banco continua recebendo um auth.uid() diferente por pessoa.
-      const storageKey = `fh.auth.profile.${normalized.toLocaleLowerCase('pt-BR')}`
-      const cached = localStorage.getItem(storageKey)
-      if (cached) {
-        const previous = JSON.parse(cached) as Session
-        const { error } = await supabase.auth.setSession({
-          access_token: previous.access_token,
-          refresh_token: previous.refresh_token,
-        })
-        if (!error) {
-          const { data: restored } = await supabase.auth.getSession()
-          if (restored.session) localStorage.setItem(storageKey, JSON.stringify(restored.session))
-          localStorage.setItem('fh.active-profile', normalized)
-          setProfileName(normalized)
-          return { error: null }
-        }
-        localStorage.removeItem(storageKey)
-      }
-      localStorage.setItem('fh.active-profile', normalized)
-      // Remove a sessão ativa somente deste navegador; revogar no servidor
-      // invalidaria a sessão guardada para a troca posterior deste perfil.
-      await supabase.auth.signOut({ scope: 'local' })
-      const { data, error } = await supabase.auth.signInAnonymously({
-        options: { data: { display_name: normalized } },
-      })
-      if (error || !data.session) return { error: mapAuthError(error) ?? 'Não foi possível iniciar a sessão.' }
-      await supabase.auth.updateUser({ data: { display_name: normalized } })
-      const { data: activeSession } = await supabase.auth.getSession()
-      localStorage.setItem(storageKey, JSON.stringify(activeSession.session ?? data.session))
-      localStorage.setItem('fh.active-profile', normalized)
-      setProfileName(normalized)
-      return { error: null }
-    } catch {
-      return { error: 'Não foi possível selecionar esse perfil neste navegador.' }
-    } finally {
-      switchingProfile.current = false
-    }
+    if (!normalized) return { error: 'Escolha um perfil.' }
+    const { data, error } = await supabase
+      .from('profiles_fh')
+      .select('id, display_name')
+      .eq('display_name', normalized)
+      .maybeSingle()
+    if (error) return { error: `Não foi possível consultar o perfil: ${error.message}` }
+    if (!data) return { error: `O perfil “${normalized}” não existe em profiles_fh. Confira os perfis iniciais no banco.sql.` }
+
+    activateProfile(data.id)
+    localStorage.setItem('fh.active-profile', data.display_name)
+    setUser({ id: data.id, email: null, user_metadata: { display_name: data.display_name } })
+    setProfileName(data.display_name)
+    setStatus('authenticated')
+    return { error: null }
   }, [supabase])
 
-  const signUp = useCallback<AuthContextValue['signUp']>(
-    async (email, password, displayName) => {
-      if (!supabase) return { error: 'Supabase não configurado.' }
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { display_name: displayName } },
-      })
-      const mapped = mapAuthError(error)
-      if (mapped) return { error: mapped }
-      // Sem sessão quando a confirmação de e-mail está ativa no Supabase.
-      if (data.session) return { error: null }
-      return { error: 'Conta criada. Confirme o e-mail antes de entrar.' }
-    },
-    [supabase],
-  )
-
   const signOut = useCallback(async () => {
-    if (supabase) {
-      try {
-        const { data } = await supabase.auth.getSession()
-        const active = localStorage.getItem('fh.active-profile')
-        if (data.session && active) {
-          localStorage.setItem(
-            `fh.auth.profile.${active.toLocaleLowerCase('pt-BR')}`,
-            JSON.stringify(data.session),
-          )
-        }
-        await supabase.auth.signOut({ scope: 'local' })
-      } catch {
-        // Sessão local já removida; não há o que fazer além de seguir.
-      }
-    }
-    setSession(null)
+    activateProfile(null)
+    setUser(null)
+    setProfileName(null)
     setStatus('anonymous')
-    // Limpa caches privados e dados locais não persistentes no logout.
     try {
       if ('serviceWorker' in navigator) {
         const registration = await navigator.serviceWorker.getRegistration()
@@ -161,28 +67,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         navigator.serviceWorker.controller?.postMessage('fh:clear-private')
       }
       for (const key of Object.keys(localStorage)) {
-        if (key.startsWith('fh.') && key !== 'fh.preferences' && !key.startsWith('fh.auth.profile.')) localStorage.removeItem(key)
+        if (key.startsWith('fh.') && key !== 'fh.preferences') localStorage.removeItem(key)
       }
-      localStorage.removeItem('fh.active-profile')
       sessionStorage.clear()
     } catch {
-      // Armazenamento indisponível (modo privado etc.): nada a limpar.
+      // Armazenamento indisponível: segue sem cache local.
     }
-  }, [supabase])
+  }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({
-      status,
-      session,
-      user: session?.user ?? null,
-      supabase,
-      signIn,
-      signUp,
-      signOut,
-      selectProfile,
-      profileName,
-    }),
-    [status, session, supabase, signIn, signUp, signOut, selectProfile, profileName],
+    () => ({ status, user, supabase, signOut, selectProfile, profileName }),
+    [status, user, supabase, signOut, selectProfile, profileName],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -6,6 +6,7 @@ import {
   fetchHousehold,
   fetchMembers,
   joinHousehold as joinHouseholdRequest,
+  renameHousehold as renameHouseholdRequest,
   type HouseholdState,
 } from './service'
 
@@ -61,6 +62,11 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
   const createHousehold = useCallback<HouseholdContextValue['createHousehold']>(
     async (name) => {
       if (!supabase) return { error: 'Supabase não configurado.' }
+      // Revalida antes de inserir: evita criar outra casa se o formulário ficou
+      // aberto enquanto a consulta de associação ainda estava em andamento.
+      const existing = await refresh()
+      if (existing.error) return { error: `Não foi possível verificar se este perfil já tem uma casa: ${existing.error}` }
+      if (existing.found) return { error: 'Este perfil já está vinculado a uma casa. A casa existente foi carregada; não é necessário criar outra.' }
       const { error } = await createHouseholdRequest(supabase, name.trim())
       if (error) return { error }
       const result = await refresh()
@@ -84,9 +90,22 @@ export function HouseholdProvider({ children }: { children: ReactNode }) {
     [supabase, refresh],
   )
 
+  const renameHousehold = useCallback<HouseholdContextValue['renameHousehold']>(
+    async (name) => {
+      if (!supabase || !user) return { error: 'Sessão indisponível.' }
+      if (state.kind !== 'ready') return { error: 'Nenhuma casa carregada para editar.' }
+      if (state.household.created_by !== user.id) return { error: 'Somente quem criou a casa pode alterar o nome.' }
+      const { error } = await renameHouseholdRequest(supabase, state.household.id, user.id, name)
+      if (error) return { error }
+      const result = await refresh()
+      return result.error ? { error: result.error } : result.found ? { error: null } : { error: 'O nome foi salvo, mas a casa não pôde ser recarregada.' }
+    },
+    [supabase, user, state, refresh],
+  )
+
   const value = useMemo<HouseholdContextValue>(
-    () => ({ state, refresh, createHousehold, joinHousehold }),
-    [state, refresh, createHousehold, joinHousehold],
+    () => ({ state, refresh, createHousehold, joinHousehold, renameHousehold }),
+    [state, refresh, createHousehold, joinHousehold, renameHousehold],
   )
 
   return <HouseholdContext.Provider value={value}>{children}</HouseholdContext.Provider>

@@ -12,15 +12,18 @@ type KeyState =
   | { checked: true; configured: boolean; key_last4: string | null; model: string }
 
 async function callConfig(
-  supabase: { auth: { getSession: () => Promise<{ data: { session: { access_token: string } | null } }> } },
+  profileId: string,
   body: unknown,
 ): Promise<{ data: Record<string, unknown> | null; status: number }> {
   const base = `${env.supabaseUrl.replace(/\/$/, '')}/functions/v1`
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token ?? ''
   const response = await fetch(`${base}/groq-config`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: {
+      'content-type': 'application/json',
+      apikey: env.supabaseAnonKey,
+      Authorization: `Bearer ${env.supabaseAnonKey}`,
+      'x-profile-id': profileId,
+    },
     body: JSON.stringify(body),
   })
   try {
@@ -51,7 +54,7 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     if (!supabase || !householdId) return
     setBusy(true)
     try {
-      const { data } = await callConfig(supabase, { action: 'status', household_id: householdId })
+      const { data } = await callConfig(user?.id ?? '', { action: 'status', household_id: householdId })
       setState({
         checked: true,
         configured: Boolean(data?.configured),
@@ -80,7 +83,7 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     setBusy(true)
     setMessage(null)
     try {
-      const { data, status } = await callConfig(supabase, {
+      const { data, status } = await callConfig(user?.id ?? '', {
         action: 'set',
         household_id: householdId,
         key: key.trim(),
@@ -125,7 +128,7 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     setBusy(true)
     setMessage(null)
     try {
-      const { data, status } = await callConfig(supabase, { action: 'test', household_id: householdId })
+      const { data, status } = await callConfig(user?.id ?? '', { action: 'test', household_id: householdId })
       if (status === 200 && data && !data.error) {
         setMessage(t('ai.keyTestOk', { model: String(data.model ?? model) }))
         setMessageError(false)
@@ -142,7 +145,7 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     if (!supabase || !householdId) return
     setBusy(true)
     try {
-      await callConfig(supabase, { action: 'remove', household_id: householdId })
+      await callConfig(user?.id ?? '', { action: 'remove', household_id: householdId })
       setMessage(t('ai.keyMissing'))
       setMessageError(false)
       await refresh()
