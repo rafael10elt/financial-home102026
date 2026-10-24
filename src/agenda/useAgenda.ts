@@ -54,7 +54,7 @@ export type AgendaTask = {
   notes: string | null
   due_at: string | null
   priority: 'low' | 'medium' | 'high' | 'urgent'
-  status: 'open' | 'done' | 'cancelled'
+  status: 'open' | 'in_progress' | 'done' | 'cancelled'
   completed_at: string | null
   category_id: string | null
   visibility: 'shared' | 'personal'
@@ -364,7 +364,7 @@ export function useAgendaData() {
     const now = Date.now()
     const items: DueItem[] = [
       ...tasks
-        .filter((task) => task.status === 'open')
+        .filter((task) => task.status === 'open' || task.status === 'in_progress')
         .map((task) => ({
           kind: 'task' as const,
           id: task.id,
@@ -419,15 +419,12 @@ export function useAgendaData() {
 
   async function setTaskStatus(
     id: string,
-    status: 'open' | 'done' | 'cancelled',
+    status: 'open' | 'in_progress' | 'done' | 'cancelled',
   ): Promise<{ error: string | null }> {
     if (!supabase) return { error: 'Supabase não configurado.' }
-    const result = await zodUpdate(supabase, 'tasks_fh', id, {
-      status,
-      completed_at: status === 'done' ? new Date().toISOString() : null,
-    })
-    if (!result.error) reload()
-    return result
+    const { error } = await supabase.rpc('set_task_status_fh', { p_task_id: id, p_status: status })
+    if (!error) reload()
+    return { error: error?.message ?? null }
   }
 
   async function dismissReminder(id: string): Promise<{ error: string | null }> {

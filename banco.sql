@@ -627,7 +627,7 @@ create table if not exists public.tasks_fh (
   priority            text not null default 'medium'
                       check (priority in ('low', 'medium', 'high', 'urgent')),
   status              text not null default 'open'
-                      check (status in ('open', 'done', 'cancelled')),
+                      check (status in ('open', 'in_progress', 'done', 'cancelled')),
   completed_at        timestamptz,
   category_id         uuid references public.categories_fh (id) on delete set null,
   visibility          text not null default 'shared' check (visibility in ('shared', 'personal')),
@@ -2784,3 +2784,114 @@ select column_name, data_type
   from information_schema.columns
  where table_schema = 'public' and table_name = 'profiles_fh'
    and column_name = 'login_photo_slot';
+
+-- ---------------------------------------------------------------------
+-- FH-SQL-012: lista de compras compartilhada por casa
+-- ---------------------------------------------------------------------
+-- Para banco já criado, execute este bloco uma vez no SQL Editor do Supabase.
+begin;
+
+create table if not exists public.grocery_items_fh (
+  id           uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households_fh (id) on delete cascade,
+  name         text not null check (char_length(btrim(name)) between 1 and 120),
+  is_checked   boolean not null default false,
+  created_by   uuid references public.profiles_fh (id) on delete set null,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create index if not exists grocery_items_fh_household_idx
+  on public.grocery_items_fh (household_id, created_at);
+
+alter table public.grocery_items_fh enable row level security;
+grant select, insert, update, delete on public.grocery_items_fh to anon, authenticated;
+
+drop policy if exists grocery_items_fh_select on public.grocery_items_fh;
+create policy grocery_items_fh_select on public.grocery_items_fh
+  for select to anon, authenticated
+  using (public.is_household_member_fh(household_id));
+
+drop policy if exists grocery_items_fh_insert on public.grocery_items_fh;
+create policy grocery_items_fh_insert on public.grocery_items_fh
+  for insert to anon, authenticated
+  with check (
+    public.is_household_member_fh(household_id)
+    and created_by = public.current_profile_id_fh()
+  );
+
+drop policy if exists grocery_items_fh_update on public.grocery_items_fh;
+create policy grocery_items_fh_update on public.grocery_items_fh
+  for update to anon, authenticated
+  using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+
+drop policy if exists grocery_items_fh_delete on public.grocery_items_fh;
+create policy grocery_items_fh_delete on public.grocery_items_fh
+  for delete to anon, authenticated
+  using (public.is_household_member_fh(household_id));
+
+drop trigger if exists t_grocery_items_fh_updated on public.grocery_items_fh;
+create trigger t_grocery_items_fh_updated
+  before update on public.grocery_items_fh
+  for each row execute function public.set_updated_at_fh();
+
+commit;
+
+-- Validacao FH-SQL-012
+select column_name, data_type
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'grocery_items_fh'
+ order by ordinal_position;
+
+-- ---------------------------------------------------------------------
+-- FH-SQL-013: coluna em andamento no Quadro de tarefas
+-- ---------------------------------------------------------------------
+-- Para banco já criado, execute este bloco uma vez no SQL Editor do Supabase.
+begin;
+alter table public.tasks_fh
+  drop constraint if exists tasks_fh_status_check;
+alter table public.tasks_fh
+  add constraint tasks_fh_status_check
+  check (status in ('open', 'in_progress', 'done', 'cancelled'));
+commit;
+
+create or replace function public.set_task_status_fh(p_task_id uuid, p_status text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  actor_id uuid := public.current_profile_id_fh();
+begin
+  if p_status not in ('open', 'in_progress', 'done', 'cancelled') then
+    raise exception 'Invalid task status';
+  end if;
+
+  update public.tasks_fh task
+     set status = p_status,
+         completed_at = case when p_status = 'done' then now() else null end
+   where task.id = p_task_id
+     and public.is_household_member_fh(task.household_id)
+     and (task.visibility = 'shared'
+       or task.owner_id = actor_id
+       or task.created_by = actor_id
+       or public.is_household_owner_fh(task.household_id));
+
+  if not found then
+    raise exception 'Task not found or access denied';
+  end if;
+end;
+$$;
+
+revoke all on function public.set_task_status_fh(uuid, text) from public;
+grant execute on function public.set_task_status_fh(uuid, text) to anon, authenticated;
+
+-- Validacao FH-SQL-013
+select conname, pg_get_constraintdef(oid) as definition
+  from pg_constraint
+ where conrelid = 'public.tasks_fh'::regclass
+   and conname = 'tasks_fh_status_check';
+select routine_name from information_schema.routines
+ where routine_schema = 'public' and routine_name = 'set_task_status_fh';

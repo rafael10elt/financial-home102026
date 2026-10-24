@@ -1004,8 +1004,7 @@ export function FinancePage() {
           resetLabel={t('fin.dashboard.reset')}
           doneLabel={t('fin.dashboard.done')}
           showLabel={(name) => t('fin.dashboard.show', { name })}
-          moveUpLabel={(name) => t('fin.dashboard.up', { name })}
-          moveDownLabel={(name) => t('fin.dashboard.down', { name })}
+          dragLabel={(name) => t('fin.dashboard.drag', { name })}
           layout={widgetLayout}
           onChange={setWidgetLayout}
           onReset={() => {

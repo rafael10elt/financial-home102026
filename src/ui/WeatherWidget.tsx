@@ -63,7 +63,7 @@ function formatHourLabel(iso: string): string {
   }).format(new Date(iso))
 }
 
-function dublinDateAndHour(now: Date): { date: string; hour: number } {
+function dublinDateAndHour(now: Date): { date: string; hour: number; minute: number } {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: DUBLIN_TIMEZONE,
     year: 'numeric',
@@ -71,12 +71,20 @@ function dublinDateAndHour(now: Date): { date: string; hour: number } {
     day: '2-digit',
     hour: '2-digit',
     hourCycle: 'h23',
+    minute: '2-digit',
   }).formatToParts(now)
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
   return {
     date: `${values['year']}-${values['month']}-${values['day']}`,
     hour: Number(values['hour']),
+    minute: Number(values['minute']),
   }
+}
+
+function durationLabel(totalMinutes: number): string {
+  const hours = Math.floor(Math.max(0, totalMinutes) / 60)
+  const minutes = Math.max(0, totalMinutes) % 60
+  return `${hours}h ${String(minutes).padStart(2, '0')}m`
 }
 
 function formatDayLabel(isoDate: string): string {
@@ -138,6 +146,36 @@ export function WeatherWidget() {
   }
 
   const dublinNow = dublinDateAndHour(new Date(clock))
+  const todayWeather = state.status === 'ready'
+    ? state.data.daily.find((day) => day.date === dublinNow.date)
+    : undefined
+  const localNow = `${dublinNow.date}T${String(dublinNow.hour).padStart(2, '0')}:${String(dublinNow.minute).padStart(2, '0')}`
+  const daylightStatus = (() => {
+    if (!todayWeather?.sunrise || !todayWeather.sunset) return null
+    const sunrise = todayWeather.sunrise.slice(0, 16)
+    const sunset = todayWeather.sunset.slice(0, 16)
+    const nextSunrise = state.status === 'ready'
+      ? state.data.daily.find((day) => day.date > dublinNow.date)?.sunrise?.slice(0, 16)
+      : undefined
+    const target = localNow < sunrise ? sunrise : localNow < sunset ? sunset : nextSunrise
+    if (!target) return null
+    const [targetDate, targetTime] = target.split('T')
+    const toWallClockUtc = (date: string, time: string) => {
+      const [year, month, day] = date.split('-').map(Number)
+      const [hour, minute] = time.split(':').map(Number)
+      return Date.UTC(year, month - 1, day, hour, minute)
+    }
+    const remaining = Math.max(0, Math.round((toWallClockUtc(targetDate, targetTime) - toWallClockUtc(dublinNow.date, `${String(dublinNow.hour).padStart(2, '0')}:${String(dublinNow.minute).padStart(2, '0')}`)) / 60_000))
+    return {
+      sunrise: todayWeather.sunrise,
+      sunset: todayWeather.sunset,
+      text: localNow < sunrise
+        ? t('weather.untilSunrise', { time: durationLabel(remaining) })
+        : localNow < sunset
+          ? t('weather.daylightRemaining', { time: durationLabel(remaining) })
+          : t('weather.untilSunrise', { time: durationLabel(remaining) }),
+    }
+  })()
 
   return (
     <Card>
@@ -192,6 +230,23 @@ export function WeatherWidget() {
               <dd>{t('weather.rain', { value: state.data.current.precipitation.toFixed(1) })}</dd>
             </div>
           </dl>
+
+          {daylightStatus && (
+            <dl className="grid grid-cols-2 gap-2 rounded-lg border border-border p-3 text-sm sm:grid-cols-3">
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('weather.sunrise')}</dt>
+                <dd className="font-medium tabular-nums">{formatHourLabel(daylightStatus.sunrise)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('weather.sunset')}</dt>
+                <dd className="font-medium tabular-nums">{formatHourLabel(daylightStatus.sunset)}</dd>
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <dt className="text-xs text-muted-foreground">{t('weather.daylight')}</dt>
+                <dd className="font-medium">{daylightStatus.text}</dd>
+              </div>
+            </dl>
+          )}
 
           {state.data.hourlyToday.length > 0 && (
             <div>

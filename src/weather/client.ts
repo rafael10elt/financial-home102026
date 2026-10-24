@@ -54,6 +54,8 @@ export type DailyPoint = {
   max: number
   min: number
   precipitationProbability: number
+  sunrise: string | null
+  sunset: string | null
 }
 
 export type WeatherData = {
@@ -95,7 +97,7 @@ function buildUrl(): string {
     current:
       'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m',
     hourly: 'temperature_2m,precipitation_probability,weather_code',
-    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset',
     timezone: DUBLIN_TIMEZONE,
     forecast_days: '7',
     wind_speed_unit: 'kmh',
@@ -125,6 +127,8 @@ type OpenMeteoResponse = {
     temperature_2m_max?: (number | null)[]
     temperature_2m_min?: (number | null)[]
     precipitation_probability_max?: (number | null)[]
+    sunrise?: (string | null)[]
+    sunset?: (string | null)[]
   }
 }
 
@@ -160,6 +164,8 @@ function parseResponse(payload: OpenMeteoResponse, fetchedAt: string): WeatherDa
     max: toNumber(payload.daily?.temperature_2m_max?.[index]),
     min: toNumber(payload.daily?.temperature_2m_min?.[index]),
     precipitationProbability: toNumber(payload.daily?.precipitation_probability_max?.[index], 0),
+    sunrise: payload.daily?.sunrise?.[index] ?? null,
+    sunset: payload.daily?.sunset?.[index] ?? null,
   }))
 
   return {

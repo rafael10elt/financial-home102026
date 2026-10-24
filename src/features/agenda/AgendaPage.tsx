@@ -168,7 +168,7 @@ export function AgendaPage() {
   const openTasks = useMemo(
     () =>
       agenda.tasks
-        .filter((task) => task.status === 'open' && matchesFilters(task))
+        .filter((task) => (task.status === 'open' || task.status === 'in_progress') && matchesFilters(task))
         .sort((a, b) => (a.due_at ?? '9999') < (b.due_at ?? '9999') ? -1 : 1),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [agenda.tasks, filterOwner, filterCategory, filterVisibility],
@@ -282,14 +282,14 @@ export function AgendaPage() {
       useOutbox.getState().enqueue(
         newOp('task.update', agenda.householdId, user.id, {
           id: task.id,
-          status: task.status === 'open' ? 'done' : 'open',
-          completed_at: task.status === 'open' ? new Date().toISOString() : null,
+          status: task.status === 'done' ? 'open' : 'done',
+          completed_at: task.status === 'done' ? null : new Date().toISOString(),
         }, task.id, task.updated_at),
       )
       setNotice(t('sync.savedOffline'))
       return
     }
-    const result = await agenda.setTaskStatus(task.id, task.status === 'open' ? 'done' : 'open')
+    const result = await agenda.setTaskStatus(task.id, task.status === 'done' ? 'open' : 'done')
     if (result.error) setServerError(t('agenda.saveError', { message: result.error }))
   }
 
@@ -683,6 +683,7 @@ function TaskRow({
         />
         <div className="flex flex-col">
           <span className="font-medium">{task.title}</span>
+          {task.status === 'in_progress' && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">{t('agenda.status.inProgress')}</span>}
           <span className="text-xs text-muted-foreground">
             {overdue ? (
               <strong className="text-destructive">{t('agenda.overdue')} · </strong>

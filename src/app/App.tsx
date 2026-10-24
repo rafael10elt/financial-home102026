@@ -8,7 +8,6 @@ import { LoginPage } from '../features/auth/LoginPage'
 import { OnboardingPage } from '../features/household/OnboardingPage'
 import { OverviewPage } from '../features/overview/OverviewPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
-import { PhasePlaceholder } from '../ui/PhasePlaceholder'
 import { Card, CardDescription, CardTitle } from '../ui/Card'
 import { Button } from '../ui/Button'
 
@@ -25,6 +24,9 @@ const DiaryPage = lazy(() =>
 )
 const FinancePage = lazy(() =>
   import('../features/finance/FinancePage').then((module) => ({ default: module.FinancePage })),
+)
+const BoardPage = lazy(() =>
+  import('../features/board/BoardPage').then((module) => ({ default: module.BoardPage })),
 )
 const NotificationsPage = lazy(() =>
   import('../features/notifications/NotificationsPage').then((module) => ({
@@ -102,10 +104,7 @@ function GuardedRoutes() {
         <Route path="financas" element={<LazyPage><FinancePage /></LazyPage>} />
         <Route path="diario" element={<LazyPage><DiaryPage /></LazyPage>} />
         <Route path="assistente" element={<LazyPage><AssistantPage /></LazyPage>} />
-        <Route
-          path="quadro"
-          element={<PhasePlaceholder phase="4" module="Quadro" />}
-        />
+        <Route path="quadro" element={<LazyPage><BoardPage /></LazyPage>} />
         <Route path="configuracoes" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

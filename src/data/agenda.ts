@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 export const visibilitySchema = z.enum(['shared', 'personal'])
 export const prioritySchema = z.enum(['low', 'medium', 'high', 'urgent'])
-export const taskStatusSchema = z.enum(['open', 'done', 'cancelled'])
+export const taskStatusSchema = z.enum(['open', 'in_progress', 'done', 'cancelled'])
 export const frequencySchema = z.enum(['daily', 'weekly', 'monthly', 'yearly'])
 export const exceptionActionSchema = z.enum(['skipped', 'postponed'])
 

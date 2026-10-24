@@ -546,9 +546,9 @@ function AutomationsTab({
 
   const digest = buildDigest({
     date: new Date().toISOString().slice(0, 10),
-    tasksOpen: agenda.tasks.filter((task) => task.status === 'open').length,
+    tasksOpen: agenda.tasks.filter((task) => task.status === 'open' || task.status === 'in_progress').length,
     tasksOverdue: agenda.tasks
-      .filter((task) => task.status === 'open' && task.due_at && task.due_at < new Date().toISOString())
+      .filter((task) => (task.status === 'open' || task.status === 'in_progress') && task.due_at && task.due_at < new Date().toISOString())
       .slice(0, 10)
       .map((task) => ({ title: task.title, dueAt: task.due_at })),
     eventsToday: [],

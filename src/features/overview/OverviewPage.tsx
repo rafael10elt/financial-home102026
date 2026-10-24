@@ -18,6 +18,8 @@ import { useToast } from '../../ui/toastContext'
 import { useLiveRates } from '../../finance/useLiveRates'
 import { ExchangeRateWidget } from '../finance/FinanceDashboardCharts'
 import { DashboardWidgetsDialog } from '../finance/DashboardWidgetsDialog'
+import { TradingSessionsWidget } from '../../ui/TradingSessionsWidget'
+import { GroceryListWidget } from '../../ui/GroceryListWidget'
 
 const DEFAULT_WIDGETS = [
   'clocks',
@@ -29,6 +31,8 @@ const DEFAULT_WIDGETS = [
   'financeSoon',
   'diarySoon',
   'exchange',
+  'tradingSessions',
+  'grocery',
 ] as const
 
 type WidgetId = (typeof DEFAULT_WIDGETS)[number]
@@ -127,6 +131,9 @@ export function OverviewPage() {
       void supabase
         .from('dashboard_layouts_fh')
         .upsert({ user_id: user.id, layout: next }, { onConflict: 'user_id' })
+        .then(({ error }) => {
+          if (error) notify('error', t('overview.widgets'), error.message)
+        })
     }
   }
 
@@ -146,7 +153,7 @@ export function OverviewPage() {
   })
 
   const openTasks = agenda.tasks
-    .filter((task) => task.status === 'open')
+    .filter((task) => task.status === 'open' || task.status === 'in_progress')
     .sort((a, b) => (a.due_at ?? '9999') < (b.due_at ?? '9999') ? -1 : 1)
     .slice(0, 5)
 
@@ -156,6 +163,10 @@ export function OverviewPage() {
         return <ClocksWidget />
       case 'weather':
         return <WeatherWidget />
+      case 'tradingSessions':
+        return <TradingSessionsWidget />
+      case 'grocery':
+        return <GroceryListWidget />
       case 'quickActions':
         return (
           <Card>
@@ -276,14 +287,14 @@ export function OverviewPage() {
             clocks: t('overview.widget.clocks'), weather: t('weather.title'), quickActions: t('overview.quickActions'),
             agendaToday: t('overview.agendaToday'), tasksOpen: t('overview.tasksOpen'), mood: t('diary.moodToday'),
             financeSoon: t('overview.financeSoon'), diarySoon: t('overview.diarySoon'), exchange: t('fin.dashboard.exchange'),
+            tradingSessions: t('overview.trading.title'), grocery: t('overview.grocery.title'),
           }}
           title={t('overview.widgets')}
           description={t('overview.widgetDescription')}
           resetLabel={t('fin.dashboard.reset')}
           doneLabel={t('fin.dashboard.done')}
           showLabel={(name) => t('fin.dashboard.show', { name })}
-          moveUpLabel={(name) => t('fin.dashboard.up', { name })}
-          moveDownLabel={(name) => t('fin.dashboard.down', { name })}
+          dragLabel={(name) => t('fin.dashboard.drag', { name })}
           layout={layout}
           onChange={persist}
           onReset={() => {

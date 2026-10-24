@@ -1492,3 +1492,28 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - Adicionado widget opcional de câmbio automático EUR → GBP/BRL/USD, reutilizando fonte/cache Frankfurter já usado no resumo financeiro. O câmbio fica oculto por padrão na Visão geral e pode ser ativado pelo modal “Widgets”.
 - Confirmações de personalização exibidas por toast; sem alteração de schema, não executar SQL no Supabase.
 - Verificação: `npm run build` concluído com sucesso; aviso existente de chunks >500 kB permanece.
+
+# 2026-10-24 — Clima, sessões MNQ, lista de mercado e arraste de widgets
+
+- Clima: a previsão Open-Meteo agora solicita nascer e pôr do sol. O widget mostra os horários de Dublin e calcula o tempo restante de luz ou até o próximo amanhecer, sem reinterpretar o fuso do navegador.
+- Visão geral: adicionados widgets de sessões MNQ (horário Europe/Dublin) e lista rápida compartilhada de mercado. A sessão considera Power Hour antes de RTH, mostra a próxima janela entre Londres/pré-mercado/abertura de NY e lembra o limite das 20h55. O calendário de sessões é indicativo em dias úteis e não contempla feriados.
+- Lista de mercado: itens são adicionados com Enter/botão, marcados como comprados e removidos em lote após confirmação modal. Toasts informam inclusão, remoção e erros. Ambos os perfis da casa leem os mesmos itens; atualização periódica a cada 12 segundos.
+- Personalização: setas substituídas por reordenação via drag-and-drop HTML5; checkboxes de visibilidade mantidos. Ordem e visibilidade continuam salvas por perfil no Supabase (`dashboard_layouts_fh`) e em `localStorage` como fallback.
+- Banco: adicionada a tabela `grocery_items_fh`, índices, trigger e políticas RLS limitadas aos membros da casa. Para banco existente, executar uma vez no SQL Editor o bloco `FH-SQL-012` no final de `banco.sql`; não é necessário apagar os dados ou recriar o banco.
+- Verificação: `npm run build` concluído após a integração; aviso existente de chunks acima de 500 kB permanece.
+
+# 2026-10-24 — Quadro de tarefas da casa
+
+- A rota “Quadro”, antes placeholder, agora mostra tarefas em três colunas: A fazer, Em andamento e Concluídas. Os cartões usam as mesmas tarefas da Agenda, com criação/edição, prioridade, responsável, categoria e prazo. É possível mudar a etapa arrastando no desktop ou pelo seletor (também funciona em telas touch).
+- O status “Em andamento” foi adicionado ao modelo local; Overview, Agenda e contagem de vencimentos incluem tarefas em andamento. Itens cancelados continuam fora do quadro.
+- A movimentação de status passa por `set_task_status_fh`: membros podem mover tarefas compartilhadas; tarefas pessoais continuam restritas a responsável/criador/dono. Edição e exclusão continuam limitadas pelas policies de tarefa já existentes.
+- O Mapa da Verdade define Fase 4 como Diário e não especifica este quadro de tarefas como entrega da fase. O Quadro do menu foi desenvolvido como extensão coerente da Agenda, sem substituir o quadro de dicas/anúncios/fofocas que já está no Diário.
+- Banco: FH-SQL-013 amplia a constraint de `tasks_fh.status` e cria a função RPC segura `set_task_status_fh`. Em banco existente, execute uma vez o bloco FH-SQL-013 ao final de `banco.sql`; não apagar dados. A migração correspondente está em `supabase/migrations/20261024170000_fh_board.sql`. SQL remoto não foi executado.
+- Verificação: `npm run build` passou. Não foram executados testes automatizados nesta rodada. O aviso existente de bundle acima de 500 kB permanece.
+
+## Pendências atuais do projeto
+
+- **Supabase:** executar FH-SQL-013 antes de mover tarefas para “Em andamento”; em seguida validar com os dois perfis as tarefas compartilhadas, pessoais e as permissões de edição/exclusão. Validar também as migrações previamente preparadas que ainda não tenham sido aplicadas no banco ativo.
+- **Assistente/produção:** publicar ou confirmar a publicação da Edge Function `groq-chat` e testar consulta, resumo e ações com dados conhecidos nos dois perfis.
+- **PWA/offline:** validar instalação, cache privado/logout, conectividade e fila de sincronização em dispositivos reais; o quadro não enfileira mudanças offline e requer conexão para salvar etapas.
+- **Entrega final:** publicar no Netlify, revisar mobile/acessibilidade, fazer backup recuperável e completar testes de RLS por chamadas diretas à API. O build local, sozinho, não confirma esses itens.
