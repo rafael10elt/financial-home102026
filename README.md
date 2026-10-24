@@ -33,7 +33,7 @@ Sem `.env` válido a aplicação abre mostrando o estado real
 | `VITE_SUPABASE_ANON_KEY` | sim | frontend | chave pública do projeto; políticas RLS aceitam o perfil selecionado pelo app |
 | `VITE_PROFILES` | não | frontend | nomes separados por vírgula na tela de seleção; padrão `Jéssica,Rafael` |
 | `GROQ_API_KEY` | depois (F5) | **somente backend** | chave Groq; nunca com prefixo `VITE_` |
-| `GROQ_ENC_KEY` | opcional (F5) | **somente backend** | chave de criptografia de 32 bytes para armazenar chave Groq por casa |
+| `GROQ_ENC_KEY` | IA | **somente backend** | chave global de criptografia (32 bytes) para proteger a chave Groq compartilhada |
 
 Nenhum segredo é aceito no bundle do frontend.
 
@@ -90,44 +90,43 @@ O chat e a chave Groq exigem duas Edge Functions implantadas. Sem elas, a
 tela do assistente mostra o estado real de "backend indisponível" — nada é
 simulado.
 
-O chat já está implementado. Para usar a chave global guardada no `.env`, copie-a
-para os segredos das Edge Functions (o Vite nunca envia `GROQ_API_KEY` ao
-navegador) e publique as funções:
+O assistente atua como governanta digital. Ao responder sobre dados salvos,
+consulta por ferramentas autorizadas a agenda, finanças, diário, dicas, recados
+e outros registros da casa. As buscas respeitam a casa da conversa e mostram
+registros pessoais somente ao perfil correspondente; não há SQL livre nem
+envio automático do banco inteiro. Os trechos necessários à resposta são
+enviados à Groq para processamento.
+
+Para a chave digitada em Configurações → IA, publique as funções e defina
+`GROQ_ENC_KEY` (32 bytes em base64) como segredo antes de salvar. A chave Groq
+é validada pela função e criptografada uma vez numa configuração global. Todos
+os perfis e casas usam a mesma chave; só o dono da casa pode substituí-la.
+`GROQ_API_KEY` é opcional como fallback global e não é lida do `.env` do frontend:
 
 ```powershell
 supabase login
 supabase link --project-ref SEU-PROJECT-REF
-supabase secrets set GROQ_API_KEY="COLE_A_CHAVE_GROQ_AQUI"
-supabase functions deploy groq-chat
-supabase functions deploy groq-config
-```
-
-Execute também o bloco `FH-SQL-005` em `banco.sql` se ainda não tiver aplicado
-as tabelas do assistente. A chave configurada como segredo do projeto é
-compartilhada pelas casas atendidas por essas funções; a chave salva pela tela
-Configurações → IA é por casa e fica criptografada no banco.
-
-Para armazenar uma chave por casa na interface, além do `FH-SQL-005` e das
-funções publicadas, configure `GROQ_ENC_KEY` como segredo de 32 bytes:
-
-```bash
-# Gerar a chave de criptografia (guarde em local seguro, fora do Git)
+# Gere uma única vez e guarde em local seguro, fora do Git:
 openssl rand -base64 32
-
-# Segredos (nunca no repositório)
+# Só configure se GROQ_ENC_KEY ainda não existir no projeto. Se já existir,
+# mantenha exatamente o mesmo valor para continuar lendo a chave criptografada:
 supabase secrets set GROQ_ENC_KEY="<base64-de-32-bytes>"
 # SUPABASE_URL, SUPABASE_ANON_KEY e SUPABASE_SERVICE_ROLE_KEY
 # já existem no ambiente das funções automaticamente.
-
-# Implantar
 supabase functions deploy groq-chat
 supabase functions deploy groq-config
 ```
 
+Se o banco já foi criado com a versão anterior, execute somente o bloco
+`FH-SQL-009` no fim de `banco.sql`; ele consolida as configurações por casa
+na chave mais recentemente atualizada. Em banco limpo, o SQL completo já cria
+o formato global. `GROQ_ENC_KEY` é uma chave técnica separada da chave Groq;
+mantenha-a guardada, pois sem ela a chave criptografada não poderá ser lida.
+
 Depois disso, o dono da casa define a chave em
 Configurações → "Chave Groq (IA)": a chave é validada contra a API Groq
-**antes** de ser salva (criptografada em `ai_config_fh`). A troca é feita
-pela mesma tela, sem editar código.
+**antes** de ser salva (criptografada em `ai_config_fh`). Todos os perfis
+passam a usá-la; substituí-la nessa tela atualiza a chave para todos.
 
 **Chave exposta anteriormente:** se a chave Groq compartilhada no início do
 projeto ainda estiver ativa em algum lugar, gere uma nova no painel da Groq

@@ -1,7 +1,7 @@
 // groq-chat — assistente da casa.
-// Fluxo: mensagem -> Groq (com tools) -> executa rotina direto / propõe
-// confirmação p/ sensível -> responde. NUNCA executa SQL arbitrário:
-// apenas as tools abaixo, com o JWT do usuário (RLS = usuário).
+// Fluxo: mensagem -> Groq (com tools) -> executa rotina direta / propõe
+// confirmação para ação sensível -> responde. Não executa SQL arbitrário;
+// usa somente as tools abaixo, com escopo da casa validado no backend.
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { decryptText } from '../_shared/crypto.ts'
@@ -57,6 +57,18 @@ const TOOLS: ToolDef[] = [
     description: 'Últimos humores registrados na casa.',
     sensitive: false,
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'household_search',
+    description: 'Pesquisa registros salvos na casa por palavra ou frase, incluindo agenda, finanças, diário, dicas, recados e fofocas. Retorna somente registros compartilhados ou pessoais do perfil ativo.',
+    sensitive: false,
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Palavra-chave ou frase curta. Se omitida, consulta registros recentes de cada área.' },
+        area: { type: 'string', enum: ['all', 'agenda', 'finances', 'diary'], description: 'Área opcional; padrão all.' },
+      },
+    },
   },
   {
     name: 'task_create',
@@ -200,6 +212,15 @@ type Executor = {
   run: (args: Record<string, unknown>) => Promise<unknown>
 }
 
+function canProfileSee(row: Record<string, unknown>, userId: string): boolean {
+  if ('visibility' in row && row.visibility === 'personal') {
+    return row.owner_id === userId || row.created_by === userId
+  }
+  // Some personal records (for example gossip) predate the visibility field.
+  if (row.owner_id != null) return row.owner_id === userId || row.created_by === userId
+  return true
+}
+
 function executors(
   userClient: SupabaseClient,
   householdId: string,
@@ -210,7 +231,101 @@ function executors(
       userClient.from(table).select('*').eq('household_id', householdId) as ReturnType<SupabaseClient['from']>,
     )
     if (error) throw new Error(error.message)
-    return data ?? []
+    return ((data ?? []) as Record<string, unknown>[]).filter((row) => canProfileSee(row, userId))
+  }
+
+  const visibleAccountIds = async (): Promise<Set<string>> => {
+    const { data, error } = await userClient
+      .from('financial_accounts_fh')
+      .select('id,visibility,owner_id,created_by')
+      .eq('household_id', householdId)
+    if (error) throw new Error(error.message)
+    return new Set(((data ?? []) as Record<string, unknown>[])
+      .filter((row) => canProfileSee(row, userId))
+      .map((row) => String(row.id)))
+  }
+
+  const assertCanManageTransaction = async (id: string): Promise<void> => {
+    const { data: transaction } = await userClient
+      .from('financial_transactions_fh')
+      .select('owner_id,created_by')
+      .eq('id', id)
+      .eq('household_id', householdId)
+      .maybeSingle()
+    if (!transaction) throw new Error('Lançamento não encontrado nesta casa.')
+    const row = transaction as { owner_id: string | null; created_by: string | null }
+    if (row.owner_id === userId || row.created_by === userId) return
+    const { data: household } = await userClient
+      .from('households_fh')
+      .select('created_by')
+      .eq('id', householdId)
+      .maybeSingle()
+    if ((household as { created_by?: string } | null)?.created_by !== userId) {
+      throw new Error('Este lançamento pessoal pertence a outro perfil.')
+    }
+  }
+
+  const searchHousehold = async (args: Record<string, unknown>) => {
+    const term = String(args['query'] ?? '').trim().slice(0, 80).replace(/[\\%_*(),.]/g, ' ')
+    const requestedArea = String(args['area'] ?? 'all')
+    const area: 'all' | 'agenda' | 'finances' | 'diary' =
+      requestedArea === 'agenda' || requestedArea === 'finances' || requestedArea === 'diary'
+        ? requestedArea
+        : 'all'
+    const pattern = `%${term.trim()}%`
+    const groups: Record<string, { table: string; columns: string; fields: string[] }[]> = {
+      agenda: [
+        { table: 'categories_fh', columns: 'id,domain,name,color,icon,created_at', fields: ['name', 'domain'] },
+        { table: 'recurrence_rules_fh', columns: 'id,frequency,interval_n,days_of_week,start_date,end_date,occurrence_count,timezone,created_by,created_at', fields: ['frequency', 'timezone'] },
+        { table: 'events_fh', columns: 'id,title,description,location,start_at,visibility,owner_id,created_by,created_at', fields: ['title', 'description', 'location'] },
+        { table: 'tasks_fh', columns: 'id,title,notes,due_at,status,priority,visibility,owner_id,created_by,created_at', fields: ['title', 'notes'] },
+        { table: 'reminders_fh', columns: 'id,title,notes,remind_at,visibility,owner_id,created_by,created_at', fields: ['title', 'notes'] },
+      ],
+      finances: [
+        { table: 'financial_accounts_fh', columns: 'id,name,type,currency,opening_balance,visibility,owner_id,created_by,created_at', fields: ['name', 'type'] },
+        { table: 'financial_transactions_fh', columns: 'id,kind,amount,currency,status,description,date,account_id,owner_id,created_by,created_at', fields: ['description'] },
+        { table: 'financial_recurrences_fh', columns: 'id,kind,amount,currency,description,frequency,start_date,end_date,active,owner_id,created_by,created_at', fields: ['description'] },
+        { table: 'financial_transfers_fh', columns: 'id,from_account,to_account,amount,currency,to_amount,to_currency,fee,date,description,created_by,created_at', fields: ['description', 'currency', 'to_currency'] },
+        { table: 'exchange_rates_fh', columns: 'id,base,target,rate,source,manual,fetched_at,created_at', fields: ['base', 'target', 'source'] },
+        { table: 'financial_goals_fh', columns: 'id,name,target_amount,currency,deadline,visibility,owner_id,created_by,created_at', fields: ['name'] },
+        { table: 'financial_imports_fh', columns: 'id,filename,source,status,row_count,accepted_count,rejected_count,created_by,created_at', fields: ['filename', 'source', 'status'] },
+        { table: 'exchange_operations_fh', columns: 'id,from_amount,from_currency,to_amount,to_currency,fee,effective_rate,date,source,notes,created_by,created_at', fields: ['source', 'notes'] },
+      ],
+      diary: [
+        { table: 'posts_fh', columns: 'id,title,body,memory_date,tags,visibility,owner_id,created_by,created_at', fields: ['title', 'body'] },
+        { table: 'tips_fh', columns: 'id,title,body,visibility,owner_id,created_by,created_at', fields: ['title', 'body'] },
+        { table: 'announcements_fh', columns: 'id,title,body,pinned,expires_at,created_at', fields: ['title', 'body'] },
+        { table: 'gossip_fh', columns: 'id,title,body,owner_id,created_by,created_at', fields: ['title', 'body'] },
+        { table: 'user_moods_fh', columns: 'id,date,note,user_id,moods_fh(name,emoji),created_at', fields: ['note'] },
+      ],
+    }
+    const selected = area === 'all' ? [...groups.agenda, ...groups.finances, ...groups.diary] : groups[area]
+    const accountIds = area === 'all' || area === 'finances' ? await visibleAccountIds() : new Set<string>()
+    const results: Record<string, unknown[]> = {}
+    await Promise.all(selected.map(async ({ table, columns, fields }) => {
+      const conditions = fields.map((field) => `${field}.ilike.${pattern}`).join(',')
+      let query = userClient
+        .from(table)
+        .select(columns)
+        .eq('household_id', householdId)
+        .order('created_at', { ascending: false })
+        .limit(50)
+      if (term.trim()) query = query.or(conditions)
+      const { data, error } = await query
+      if (error) throw new Error(error.message)
+      let rows = ((data ?? []) as Record<string, unknown>[]).filter((row) => canProfileSee(row, userId))
+      if (table === 'financial_transactions_fh') {
+        rows = rows.filter((row) => row.owner_id === userId || row.created_by === userId || accountIds.has(String(row.account_id)))
+      }
+      if (table === 'user_moods_fh') rows = rows.filter((row) => row.user_id === userId)
+      if (table === 'financial_transfers_fh') {
+        rows = rows.filter((row) => accountIds.has(String(row.from_account)) && accountIds.has(String(row.to_account)))
+      }
+      results[table] = rows.slice(0, 6).map((row) => Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [key, typeof value === 'string' ? value.slice(0, 800) : value]),
+      ))
+    }))
+    return { query: term.trim() || null, area, results }
   }
 
   return {
@@ -232,7 +347,7 @@ function executors(
       run: async (args) => {
         let query = userClient
           .from('tasks_fh')
-          .select('id,title,due_at,priority,owner_id')
+          .select('id,title,due_at,priority,visibility,owner_id,created_by')
           .eq('household_id', householdId)
           .eq('status', 'open')
           .order('due_at', { ascending: true, nullsFirst: false })
@@ -240,7 +355,7 @@ function executors(
         if (args['overdue_only']) query = query.lt('due_at', new Date().toISOString())
         const { data, error } = await query
         if (error) throw new Error(error.message)
-        return data ?? []
+        return ((data ?? []) as Record<string, unknown>[]).filter((row) => canProfileSee(row, userId))
       },
     },
     finance_summary: {
@@ -249,17 +364,19 @@ function executors(
         const month = new Date().toISOString().slice(0, 8) + '01'
         const { data, error } = await userClient
           .from('financial_transactions_fh')
-          .select('kind,amount,currency,status,date')
+          .select('kind,amount,currency,status,date,account_id,owner_id,created_by')
           .eq('household_id', householdId)
           .gte('date', month)
           .neq('status', 'cancelado')
           .limit(1000)
         if (error) throw new Error(error.message)
+        const accountIds = await visibleAccountIds()
         const totals: Record<string, number> = {}
         let pending = 0
         let overdue = 0
         const today = new Date().toISOString().slice(0, 10)
-        for (const tx of (data ?? []) as { kind: string; amount: string; currency: string; status: string; date: string }[]) {
+        for (const tx of (data ?? []) as (Record<string, unknown> & { kind: string; amount: string; currency: string; status: string; date: string })[]) {
+          if (tx.owner_id !== userId && tx.created_by !== userId && !accountIds.has(String(tx.account_id))) continue
           const key = `${tx.kind}:${tx.currency}:${tx.status}`
           totals[key] = (totals[key] ?? 0) + Number(tx.amount)
           if (tx.status === 'previsto' || tx.status === 'pendente') {
@@ -275,13 +392,16 @@ function executors(
       run: async () => {
         const { data, error } = await userClient
           .from('financial_transactions_fh')
-          .select('id,kind,amount,currency,status,description,date')
+          .select('id,kind,amount,currency,status,description,date,account_id,owner_id,created_by')
           .eq('household_id', householdId)
           .in('status', ['previsto', 'pendente'])
           .order('date')
           .limit(50)
         if (error) throw new Error(error.message)
-        return data ?? []
+        const accountIds = await visibleAccountIds()
+        return ((data ?? []) as Record<string, unknown>[]).filter((row) =>
+          row.owner_id === userId || row.created_by === userId || accountIds.has(String(row.account_id)),
+        )
       },
     },
     goals_progress: {
@@ -289,12 +409,13 @@ function executors(
       run: async () => {
         const { data: goals, error } = await userClient
           .from('financial_goals_fh')
-          .select('id,name,target_amount,currency')
+          .select('id,name,target_amount,currency,visibility,owner_id,created_by')
           .eq('household_id', householdId)
           .limit(50)
         if (error) throw new Error(error.message)
         const out = []
-        for (const goal of (goals ?? []) as { id: string; name: string; target_amount: string; currency: string }[]) {
+        for (const goal of ((goals ?? []) as (Record<string, unknown> & { id: string; name: string; target_amount: string; currency: string })[])
+          .filter((row) => canProfileSee(row, userId))) {
           const { data: contributions } = await userClient
             .from('goal_contributions_fh')
             .select('amount')
@@ -312,11 +433,16 @@ function executors(
           .from('user_moods_fh')
           .select('date,note,user_id,moods_fh(name,emoji)')
           .eq('household_id', householdId)
+          .eq('user_id', userId)
           .order('date', { ascending: false })
           .limit(10)
         if (error) throw new Error(error.message)
         return data ?? []
       },
+    },
+    household_search: {
+      preview: async (args) => `Pesquisar na casa por “${String(args['query'] ?? '').slice(0, 80)}”.`,
+      run: searchHousehold,
     },
     task_create: {
       preview: async (args) => `Criar tarefa "${String(args['title'] ?? '').slice(0, 80)}".`,
@@ -414,6 +540,13 @@ function executors(
         for (const field of ['kind', 'amount', 'description', 'account_id', 'date'] as const) {
           if (!args[field]) throw new Error(`${field} é obrigatório.`)
         }
+        const { data: account } = await userClient
+          .from('financial_accounts_fh')
+          .select('id')
+          .eq('id', String(args['account_id']))
+          .eq('household_id', householdId)
+          .maybeSingle()
+        if (!account) throw new Error('A conta informada não pertence a esta casa.')
         const { data, error } = await userClient
           .from('financial_transactions_fh')
           .insert({
@@ -436,15 +569,18 @@ function executors(
     },
     finance_transaction_update: {
       preview: async (args) => {
+        await assertCanManageTransaction(String(args['id'] ?? ''))
         const { data } = await userClient
           .from('financial_transactions_fh')
           .select('description,amount,status')
           .eq('id', String(args['id'] ?? ''))
+          .eq('household_id', householdId)
           .maybeSingle()
         const before = (data ?? {}) as Record<string, unknown>
         return `Alterar lançamento "${String(before['description'] ?? args['id'])}" (${String(before['status'] ?? '?')}) com ${JSON.stringify(args)}.`;
       },
       run: async (args) => {
+        await assertCanManageTransaction(String(args['id'] ?? ''))
         const patch: Record<string, unknown> = {}
         for (const field of ['status', 'amount', 'description', 'date'] as const) {
           if (args[field] !== undefined) patch[field] = args[field]
@@ -456,6 +592,7 @@ function executors(
           .from('financial_transactions_fh')
           .update(patch)
           .eq('id', String(args['id']))
+          .eq('household_id', householdId)
           .select('id,status')
           .single()
         if (error) throw new Error(error.message)
@@ -464,19 +601,23 @@ function executors(
     },
     finance_transaction_delete: {
       preview: async (args) => {
+        await assertCanManageTransaction(String(args['id'] ?? ''))
         const { data } = await userClient
           .from('financial_transactions_fh')
           .select('description,amount,status')
           .eq('id', String(args['id'] ?? ''))
+          .eq('household_id', householdId)
           .maybeSingle()
         const row = (data ?? {}) as Record<string, unknown>
         return `EXCLUIR lançamento "${String(row['description'] ?? args['id'])}" (${String(row['amount'] ?? '?')}, ${String(row['status'] ?? '?')}).`;
       },
       run: async (args) => {
+        await assertCanManageTransaction(String(args['id'] ?? ''))
         const { error } = await userClient
           .from('financial_transactions_fh')
           .delete()
           .eq('id', String(args['id']))
+          .eq('household_id', householdId)
         if (error) throw new Error(error.message)
         return { deleted: args['id'] }
       },
@@ -484,8 +625,9 @@ function executors(
   }
 }
 
-const SYSTEM_PROMPT = `Você é o assistente do Financial Home: rápido, criativo, engraçado e levemente sarcástico — sem nunca sacrificar a precisão dos dados.
+const SYSTEM_PROMPT = `Você é a governanta digital do Financial Home: organizada, prestativa, rápida e levemente espirituosa. Conhece a rotina da casa e ajuda a mantê-la em ordem, sem comprometer precisão ou clareza.
 Hoje é {{DATE}}. Idioma: português (Brasil), a menos que peçam inglês.
+Use household_search para encontrar registros salvos em agenda, finanças, diário, dicas, recados e fofocas. Consulte somente os dados da casa desta conversa e respeite a visibilidade pessoal do perfil ativo.
 Regras: consulte apenas os dados necessários via ferramentas; nunca invente valores; lançamentos financeiros criados por você nascem PENDENTES; para alterar/excluir lançamentos, chame a ferramenta (o sistema pede confirmação ao usuário, não você); se uma ferramenta falhar, informe o erro real sem mascarar.`
 
 serve(async (request: Request): Promise<Response> => {
@@ -507,15 +649,22 @@ serve(async (request: Request): Promise<Response> => {
     const conv = conversation as { id: string; household_id: string; user_id: string } | null
     if (!conv || conv.user_id !== user.id) throw new HttpError(404, 'CONVERSATION_NOT_FOUND')
     const householdId = conv.household_id
+    const { data: membership } = await service
+      .from('household_members_fh')
+      .select('user_id')
+      .eq('household_id', householdId)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (!membership) throw new HttpError(404, 'CONVERSATION_NOT_FOUND')
 
     const { data: config } = await service
       .from('ai_config_fh')
       .select('encrypted_key,model')
-      .eq('household_id', householdId)
+      .eq('config_id', 'global')
       .maybeSingle()
     const cfg = config as { encrypted_key: string | null; model: string } | null
     // Chave global opcional no ambiente da Edge Function; nunca lê VITE_ nem
-    // expõe segredo ao navegador. Configuração criptografada da casa tem prioridade.
+    // expõe segredo ao navegador. Configuração global criptografada tem prioridade.
     const groqKey = cfg?.encrypted_key
       ? await decryptText(cfg.encrypted_key)
       : Deno.env.get('GROQ_API_KEY')?.trim()
@@ -576,8 +725,10 @@ serve(async (request: Request): Promise<Response> => {
 
     const { data: memories } = await service
       .from('ai_memories_fh')
-      .select('content')
+          .select('content')
       .eq('household_id', householdId)
+          .or(`user_id.is.null,user_id.eq.${user.id}`)
+          .or(`user_id.is.null,user_id.eq.${user.id}`)
       .eq('active', true)
       .limit(20)
     const memoryBlock = (((memories ?? []) as { content: string }[]).map((m) => m.content).join('\n') || '(nenhuma)')

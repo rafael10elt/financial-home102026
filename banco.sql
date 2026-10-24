@@ -52,6 +52,7 @@
 -- FH-SQL-006 | Fase 6 | 2026-10-14 | Push: inscricoes de notificacao push por usuario  [preparado]
 -- FH-SQL-007 | Diagnostico | 2026-10-24 | Verificacao somente leitura de casas e membros  [preparado]
 -- FH-SQL-008 | Identidade local | 2026-10-24 | Perfis Jéssica/Rafael e RLS por x-profile-id  [incluido no FH-SQL-001]
+-- FH-SQL-009 | IA | 2026-10-24 | Chave Groq única e global, compartilhada por todos os perfis [preparado]
 -- =====================================================================
 
 
@@ -2271,10 +2272,10 @@ select policyname from pg_policies
 begin;
 
 -- ---------------------------------------------------------------------
--- 1. Configuracao Groq por casa (somente backend le)
+-- 1. Configuracao Groq global (somente backend le)
 -- ---------------------------------------------------------------------
 create table if not exists public.ai_config_fh (
-  household_id  uuid primary key references public.households_fh (id) on delete cascade,
+  config_id     text primary key default 'global' check (config_id = 'global'),
   provider      text not null default 'groq',
   encrypted_key text,
   key_last4     char(4),
@@ -2576,5 +2577,69 @@ select policyname from pg_policies
 -- 3) Totais gerais (esperado: 40 tabelas *_fh, 134 policies em public):
 select count(*) from information_schema.tables
  where table_schema = 'public' and table_name like '%_fh';
+
+-- =====================================================================
+-- FH-SQL-009 — Chave Groq global compartilhada (sem chave por casa)
+-- Data: 2026-10-24
+-- Objetivo: manter uma única configuração Groq para todos os perfis.
+-- Dependências: ai_config_fh criada pelo FH-SQL-005.
+-- Efeito: remove o vínculo por household_id e usa config_id = 'global'.
+-- Migração de dados: se houver configurações antigas por casa, preserva a
+--   linha atualizada mais recentemente e descarta as demais.
+-- Rollback: não há rollback automático confiável após colapsar várias chaves.
+-- Estado: [preparado] — aplicar se o banco já foi criado com a versão antiga.
+--         O arquivo completo em banco limpo já termina neste formato.
+-- =====================================================================
+
+begin;
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'ai_config_fh'
+      and column_name = 'household_id'
+  ) then
+    delete from public.ai_config_fh
+    where household_id not in (
+      select household_id from public.ai_config_fh
+      order by updated_at desc, household_id
+      limit 1
+    );
+
+    alter table public.ai_config_fh
+      drop constraint if exists ai_config_fh_pkey;
+    alter table public.ai_config_fh
+      drop constraint if exists ai_config_fh_household_id_fkey;
+    alter table public.ai_config_fh drop column household_id;
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'ai_config_fh'
+      and column_name = 'config_id'
+  ) then
+    alter table public.ai_config_fh
+      add column config_id text not null default 'global';
+  end if;
+
+  update public.ai_config_fh set config_id = 'global';
+  alter table public.ai_config_fh
+    alter column config_id set default 'global',
+    alter column config_id set not null,
+    drop constraint if exists ai_config_fh_pkey,
+    drop constraint if exists ai_config_fh_config_id_check;
+  alter table public.ai_config_fh
+    add constraint ai_config_fh_pkey primary key (config_id),
+    add constraint ai_config_fh_config_id_check check (config_id = 'global');
+end;
+$$;
+
+commit;
+
+-- Validacao FH-SQL-009: deve haver zero ou uma linha, e qualquer linha tem
+-- config_id = 'global'. A chave nunca aparece nesta consulta.
+select config_id, provider, key_last4, model, updated_at
+from public.ai_config_fh;
 select count(*) as total_policies from pg_policies
  where schemaname = 'public';

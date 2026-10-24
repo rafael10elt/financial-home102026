@@ -18,6 +18,7 @@ export const TOOL_CATALOG: ToolInfo[] = [
   { name: 'finance_pending', description: 'Lançamentos pendentes', sensitive: false, required: [] },
   { name: 'goals_progress', description: 'Progresso das metas', sensitive: false, required: [] },
   { name: 'moods_recent', description: 'Humores recentes', sensitive: false, required: [] },
+  { name: 'household_search', description: 'Pesquisar registros da casa', sensitive: false, required: [] },
   { name: 'task_create', description: 'Criar tarefa', sensitive: false, required: ['title'] },
   { name: 'reminder_create', description: 'Criar lembrete', sensitive: false, required: ['title', 'remind_at'] },
   { name: 'event_create', description: 'Criar evento', sensitive: false, required: ['title', 'start_at'] },

@@ -167,7 +167,7 @@ export function useAssistantData() {
           const { data } = await callFunction<{ configured?: boolean; key_last4?: string; model?: string; error?: string }>(
             user.id,
             'groq-config',
-            { action: 'status', household_id: householdId },
+            { action: 'status' },
           )
           if (cancelled) return
           setKeyStatus({

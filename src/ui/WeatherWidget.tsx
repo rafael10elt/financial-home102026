@@ -52,12 +52,31 @@ function formatUpdatedAt(iso: string): string {
 }
 
 function formatHourLabel(iso: string): string {
+  // Open-Meteo retorna as horas locais de Dublin sem offset no ISO.
+  // Usar o texto evita reinterpretá-las no fuso do dispositivo do usuário.
+  if (/T\d{2}:\d{2}/.test(iso)) return iso.slice(11, 16)
   return new Intl.DateTimeFormat('pt-BR', {
     timeZone: DUBLIN_TIMEZONE,
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(new Date(iso))
+}
+
+function dublinDateAndHour(now: Date): { date: string; hour: number } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: DUBLIN_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(now)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return {
+    date: `${values['year']}-${values['month']}-${values['day']}`,
+    hour: Number(values['hour']),
+  }
 }
 
 function formatDayLabel(isoDate: string): string {
@@ -78,6 +97,7 @@ export function WeatherWidget() {
   const { t } = useI18n()
   const [state, setState] = useState<WeatherState>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
+  const [clock, setClock] = useState(() => Date.now())
 
   const load = useCallback(async (force: boolean) => {
     const cached = loadCachedWeather()
@@ -108,9 +128,16 @@ export function WeatherWidget() {
     })
   }, [load])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   async function handleRefresh() {
     await load(true)
   }
+
+  const dublinNow = dublinDateAndHour(new Date(clock))
 
   return (
     <Card>
@@ -171,23 +198,32 @@ export function WeatherWidget() {
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {t('weather.today')}
               </p>
-              <ol className="flex gap-2 overflow-x-auto pb-1">
-                {state.data.hourlyToday.slice(0, 8).map((point) => (
-                  <li
-                    key={point.time}
-                    className="flex min-w-[3.5rem] flex-col items-center rounded-md border border-border px-2 py-1.5 text-xs"
-                  >
-                    <span className="text-muted-foreground tabular-nums">
-                      {formatHourLabel(point.time)}
-                    </span>
-                    <span className="font-semibold tabular-nums">
-                      {Math.round(point.temperature)}°
-                    </span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {Math.round(point.precipitationProbability)}%
-                    </span>
-                  </li>
-                ))}
+              <ol className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8 xl:grid-cols-12 2xl:grid-cols-[repeat(24,minmax(0,1fr))]">
+                {state.data.hourlyToday.map((point) => {
+                  const date = point.time.slice(0, 10)
+                  const hour = Number(point.time.slice(11, 13))
+                  const isPast = date < dublinNow.date || (date === dublinNow.date && hour < dublinNow.hour)
+                  const isCurrent = date === dublinNow.date && hour === dublinNow.hour
+                  const hourLabel = formatHourLabel(point.time)
+                  const hourDescription = isPast
+                    ? t('weather.pastHour')
+                    : isCurrent
+                      ? t('weather.currentHour')
+                      : ''
+                  return (
+                    <li
+                      key={point.time}
+                      aria-label={hourDescription ? `${hourLabel}, ${hourDescription}` : hourLabel}
+                      className={`flex min-w-0 flex-col items-center rounded-md border border-border px-1.5 py-1.5 text-xs ${isPast ? 'opacity-40 grayscale' : ''} ${isCurrent ? 'ring-1 ring-primary' : ''}`}
+                    >
+                      <span className="text-muted-foreground tabular-nums">{hourLabel}</span>
+                      <span className="font-semibold tabular-nums">{Math.round(point.temperature)}°</span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {Math.round(point.precipitationProbability)}%
+                      </span>
+                    </li>
+                  )
+                })}
               </ol>
             </div>
           )}

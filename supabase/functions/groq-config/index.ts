@@ -1,5 +1,5 @@
 // groq-config — gerencia a chave Groq SEM expô-la ao frontend.
-// Ações: status | set | test | remove. Somente o dono da casa.
+// Ações: status | set | test | remove. Uma chave global, configurável pelo dono.
 // A chave em texto trafega apenas nesta chamada autenticada (HTTPS) e é
 // criptografada (AES-256-GCM) antes de persistir em ai_config_fh.
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
@@ -10,24 +10,28 @@ type Action = 'status' | 'set' | 'test' | 'remove'
 
 type SetBody = {
   action: 'set'
-  household_id: string
   key: string
   model?: string
 }
 
 type OtherBody = {
   action: Exclude<Action, 'set'>
-  household_id: string
 }
 
-async function assertOwner(householdId: string, userId: string): Promise<void> {
+async function assertOwner(userId: string): Promise<void> {
   const service = serviceClient()
+  const { data: profile, error: profileError } = await service
+    .from('profiles_fh')
+    .select('household_id')
+    .eq('id', userId)
+    .maybeSingle()
+  if (profileError || !profile?.household_id) throw new HttpError(403, 'NOT_HOUSEHOLD_OWNER')
   const { data, error } = await service
     .from('households_fh')
     .select('created_by')
-    .eq('id', householdId)
+    .eq('id', profile.household_id)
     .maybeSingle()
-  if (error || !data) throw new HttpError(404, 'HOUSEHOLD_NOT_FOUND')
+  if (error || !data) throw new HttpError(403, 'NOT_HOUSEHOLD_OWNER')
   if ((data as { created_by: string }).created_by !== userId) {
     throw new HttpError(403, 'NOT_HOUSEHOLD_OWNER')
   }
@@ -63,17 +67,17 @@ serve(async (request: Request): Promise<Response> => {
   try {
     const { user } = await requireUser(request)
     const body = (await request.json()) as SetBody | OtherBody
-    const { action, household_id: householdId } = body
-    if (!householdId) throw new HttpError(400, 'HOUSEHOLD_REQUIRED')
+    const { action } = body
+    if (!action) throw new HttpError(400, 'ACTION_REQUIRED')
 
-    await assertOwner(householdId, user.id)
+    if (action !== 'status') await assertOwner(user.id)
     const service = serviceClient()
 
     if (action === 'status') {
       const { data } = await service
         .from('ai_config_fh')
         .select('key_last4,model,encrypted_key')
-        .eq('household_id', householdId)
+        .eq('config_id', 'global')
         .maybeSingle()
       const row = data as { key_last4: string | null; model: string; encrypted_key: string | null } | null
       const environmentKey = Deno.env.get('GROQ_API_KEY')?.trim() ?? ''
@@ -93,16 +97,24 @@ serve(async (request: Request): Promise<Response> => {
       // Valida a chave ANTES de persistir: nunca guardamos chave inválida.
       const probe = await testKey(key, model)
       if (!probe.ok) return jsonResponse({ error: probe.code ?? 'GROQ_ERROR' }, 400)
-      const encrypted = await encryptText(key)
+      let encrypted: string
+      try {
+        encrypted = await encryptText(key)
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('GROQ_ENC_KEY')) {
+          throw new HttpError(503, 'ENCRYPTION_KEY_NOT_CONFIGURED')
+        }
+        throw error
+      }
       const { error } = await service.from('ai_config_fh').upsert(
         {
-          household_id: householdId,
+          config_id: 'global',
           provider: 'groq',
           encrypted_key: encrypted,
           key_last4: key.slice(-4),
           model,
         },
-        { onConflict: 'household_id' },
+        { onConflict: 'config_id' },
       )
       if (error) throw new HttpError(500, 'DB_ERROR')
       return jsonResponse({ configured: true, key_last4: key.slice(-4), model })
@@ -112,7 +124,7 @@ serve(async (request: Request): Promise<Response> => {
       const { data } = await service
         .from('ai_config_fh')
         .select('encrypted_key,model')
-        .eq('household_id', householdId)
+        .eq('config_id', 'global')
         .maybeSingle()
       const row = data as { encrypted_key: string | null; model: string } | null
       const key = row?.encrypted_key
@@ -129,8 +141,8 @@ serve(async (request: Request): Promise<Response> => {
       const { error } = await service
         .from('ai_config_fh')
         .upsert(
-          { household_id: householdId, provider: 'groq', encrypted_key: null, key_last4: null },
-          { onConflict: 'household_id' },
+          { config_id: 'global', provider: 'groq', encrypted_key: null, key_last4: null },
+          { onConflict: 'config_id' },
         )
       if (error) throw new HttpError(500, 'DB_ERROR')
       return jsonResponse({ configured: false })

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../auth/context'
 import { useHousehold } from '../../household/context'
@@ -6,6 +6,7 @@ import { env } from '../../config/env'
 import { Button } from '../../ui/Button'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Field, Input } from '../../ui/Input'
+import { useToast } from '../../ui/ToastProvider'
 
 type KeyState =
   | { checked: false }
@@ -34,10 +35,30 @@ async function callConfig(
   }
 }
 
+function configError(data: Record<string, unknown> | null, status: number): string {
+  if (status === 404) return 'FUNCTION_NOT_DEPLOYED'
+  if (status === 401 || status === 403) return 'FUNCTION_AUTH_FAILED'
+  return String(data?.error ?? 'BACKEND_UNAVAILABLE')
+}
+
+function configErrorMessage(code: string, fallback: string): string {
+  if (code === 'FUNCTION_NOT_DEPLOYED') {
+    return 'A função groq-config não está implantada no Supabase. Publique-a conforme o README.'
+  }
+  if (code === 'FUNCTION_AUTH_FAILED') {
+    return 'O Supabase rejeitou a chamada. Confira a chave pública configurada no .env e publique novamente a função groq-config.'
+  }
+  if (code === 'ENCRYPTION_KEY_NOT_CONFIGURED') {
+    return 'Falta configurar o segredo GROQ_ENC_KEY nas Edge Functions do Supabase. Veja as instruções no README.'
+  }
+  return fallback
+}
+
 export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
   const { t } = useI18n()
   const { supabase, user } = useAuth()
   const { state: householdState } = useHousehold()
+  const { notify } = useToast()
 
   const householdId = householdState.kind === 'ready' ? householdState.household.id : null
   const isOwner =
@@ -50,11 +71,14 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
   const [message, setMessage] = useState<string | null>(null)
   const [messageError, setMessageError] = useState(false)
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (!supabase || !householdId) return
     setBusy(true)
     try {
-      const { data } = await callConfig(user?.id ?? '', { action: 'status', household_id: householdId })
+      const { data, status } = await callConfig(user?.id ?? '', { action: 'status' })
+      if (status !== 200 || !data || data.error) {
+        throw new Error(configError(data, status))
+      }
       setState({
         checked: true,
         configured: Boolean(data?.configured),
@@ -62,19 +86,23 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
         model: (data?.model as string | undefined) ?? 'llama-3.3-70b-versatile',
       })
       if (typeof data?.model === 'string') setModel(data.model)
-    } catch {
+    } catch (error) {
       setState({ checked: true, configured: false, key_last4: null, model: '' })
-      setMessage(t('ai.backendMissing'))
+      const detail = configErrorMessage(error instanceof Error ? error.message : 'BACKEND_UNAVAILABLE', t('ai.backendMissing'))
+      setMessage(detail)
       setMessageError(true)
+      notify('error', 'Não foi possível consultar a configuração Groq', detail)
     } finally {
       setBusy(false)
     }
-  }
+  }, [supabase, householdId, user?.id, t, notify])
 
-  // Consulta o estado ao abrir (sem expor nada sensível).
-  if (!state.checked && supabase && householdId && !busy) {
+  // Consulta o estado ao abrir/trocar de casa sem disparar efeitos durante render.
+  useEffect(() => {
+    if (!supabase || !householdId) return
+    setState({ checked: false })
     void refresh()
-  }
+  }, [supabase, householdId, refresh])
 
   const configured = state.checked && state.configured
 
@@ -85,20 +113,28 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     try {
       const { data, status } = await callConfig(user?.id ?? '', {
         action: 'set',
-        household_id: householdId,
         key: key.trim(),
         model: model.trim() || undefined,
       })
       if (status !== 200 || !data || data.error) {
-        setMessage(mapError(String(data?.error ?? 'UNKNOWN')))
+        const code = configError(data, status)
+        const detail = configErrorMessage(code, mapError(code))
+        setMessage(detail)
         setMessageError(true)
+        notify('error', 'Não foi possível salvar a chave Groq', detail)
         return
       }
       setKey('')
       setMessage(t('ai.keySaved'))
       setMessageError(false)
+      notify('success', 'Chave Groq validada e salva', `Modelo: ${model.trim() || 'llama-3.3-70b-versatile'}`)
       await refresh()
       onChanged()
+    } catch {
+      const detail = 'Não foi possível acessar a função groq-config. Verifique se ela foi implantada e se o projeto Supabase está acessível.'
+      setMessage(detail)
+      setMessageError(true)
+      notify('error', 'Falha ao salvar a chave Groq', detail)
     } finally {
       setBusy(false)
     }
@@ -128,14 +164,23 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     setBusy(true)
     setMessage(null)
     try {
-      const { data, status } = await callConfig(user?.id ?? '', { action: 'test', household_id: householdId })
+      const { data, status } = await callConfig(user?.id ?? '', { action: 'test' })
       if (status === 200 && data && !data.error) {
         setMessage(t('ai.keyTestOk', { model: String(data.model ?? model) }))
         setMessageError(false)
+        notify('success', 'Conexão Groq validada', String(data.model ?? model))
       } else {
-        setMessage(mapError(String(data?.error ?? 'UNKNOWN')))
+        const code = configError(data, status)
+        const detail = configErrorMessage(code, mapError(code))
+        setMessage(detail)
         setMessageError(true)
+        notify('error', 'Não foi possível validar a conexão Groq', detail)
       }
+    } catch {
+      const detail = 'Não foi possível acessar a função groq-config. Verifique se ela foi implantada e se o projeto Supabase está acessível.'
+      setMessage(detail)
+      setMessageError(true)
+      notify('error', 'Falha ao validar a conexão Groq', detail)
     } finally {
       setBusy(false)
     }
@@ -145,11 +190,18 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
     if (!supabase || !householdId) return
     setBusy(true)
     try {
-      await callConfig(user?.id ?? '', { action: 'remove', household_id: householdId })
+      const { data, status } = await callConfig(user?.id ?? '', { action: 'remove' })
+      if (status !== 200 || data?.error) throw new Error(String(data?.error ?? 'BACKEND_UNAVAILABLE'))
       setMessage(t('ai.keyMissing'))
       setMessageError(false)
+      notify('success', 'Chave Groq removida')
       await refresh()
       onChanged()
+    } catch {
+      const detail = 'Não foi possível acessar a função groq-config. Verifique se ela foi implantada e se o projeto Supabase está acessível.'
+      setMessage(detail)
+      setMessageError(true)
+      notify('error', 'Falha ao remover a chave Groq', detail)
     } finally {
       setBusy(false)
     }

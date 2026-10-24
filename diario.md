@@ -1310,3 +1310,61 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - Verificação: `npm run build` passou (TypeScript + Vite); aviso existente de
   chunk inicial acima de 500 kB. Nenhum SQL foi executado no Supabase. O usuário
   deve executar o arquivo completo no SQL Editor depois de limpar o banco.
+
+## Rodada 020 — Feedback e falhas na configuração Groq
+
+**Data:** 2026-10-24
+
+- A captura mostra a configuração sem chave e o Assistente informando que a
+  Edge Function está indisponível. O formulário não mostrava feedback útil em
+  falhas HTTP/rede ao salvar e iniciava a consulta de status durante o render.
+- `src/features/settings/GroqKeySection.tsx`: status agora é carregado em
+  `useEffect`; salvar, testar e remover tratam falhas e exibem toasts, além de
+  mensagens na tela. HTTP 404 indica função ausente; 401/403 aponta rejeição
+  pelo Supabase. Sucesso de salvar confirma validação antes de persistir.
+- Sem alterações no schema e sem SQL a executar. A Edge Function
+  `groq-config` precisa estar implantada para salvar a chave; para conversar
+  com o modelo, implante também `groq-chat` e configure `GROQ_ENC_KEY` caso
+  salve uma chave por casa.
+- Verificação: `npm run build` passou (TypeScript + Vite); aviso existente de
+  chunk inicial acima de 500 kB. Não foi possível verificar a implantação
+  remota das Edge Functions deste workspace.
+
+## Rodada 021 — Clima de 24 horas e Groq global como governanta
+
+**Data:** 2026-10-24
+
+- Referência consultada: Mapa da Verdade PDF, especialmente §2.3 (visão
+  horária do clima e fuso Europe/Dublin), §3.6 (assistente com ferramentas
+  autorizadas, precisão e confirmação de ações sensíveis), §8 (segredos e
+  dados pessoais), §10 e §14 (fases e avanço por evidência).
+- `src/ui/WeatherWidget.tsx`: removido o limite visual das primeiras oito horas;
+  grade responsiva apresenta todos os pontos horários retornados para hoje,
+  usa hora local de Dublin e esmaece os horários anteriores. Hora atual recebe
+  destaque e a visualização atualiza a cada minuto.
+- `ai_config_fh` em `banco.sql`: uma linha global (`config_id = 'global'`) em vez
+  de uma configuração por casa. FH-SQL-009 migra bancos já criados, preservando
+  a configuração atualizada mais recentemente; no banco vazio o esquema já
+  nasce global. É SQL de migração preparado, ainda não executado.
+- `supabase/functions/groq-config` e `groq-chat`: salvam/validam/testam uma
+  chave criptografada global, usada por todos os perfis. Somente o dono da casa
+  pode substituir a chave; os demais perfis podem consultar o status e usar o
+  chat. `GROQ_ENC_KEY` continua necessária como segredo backend para criptografia.
+- `supabase/functions/groq-chat`: persona atualizada para governanta digital e
+  ferramenta `household_search` adicionada para registros recentes ou busca
+  por palavra em agenda, finanças, diário, recados, dicas e outras áreas. As
+  consultas filtram a casa, respeitam registros pessoais do perfil e limitam
+  campos/quantidade. Não há SQL arbitrário. Dados necessários à resposta são
+  enviados à Groq; o banco inteiro não é despejado automaticamente.
+- Revisão adicional de privacidade: humores ficam restritos ao perfil ativo;
+  fofocas e registros com `owner_id` são privados por padrão; transferências
+  só aparecem quando as duas contas são visíveis.
+- `README.md`: configuração agora descreve a chave global, a migração e o
+  escopo de acesso do assistente.
+- SQL para o banco existente: executar somente o bloco **FH-SQL-009** no fim
+  de `banco.sql`. Publicar novamente `groq-config` e `groq-chat` para aplicar
+  o backend atualizado. Não executei comandos remotos.
+- Verificação: `npm run build` passou (TypeScript + Vite); permanece aviso de
+  chunk inicial maior que 500 kB. Nenhuma suíte de testes foi executada.
+- Próxima etapa no mapa: Fase 7, revalidação final assistida e comprovação
+  manual das integrações, depois de aplicar FH-SQL-009 e publicar as funções.
