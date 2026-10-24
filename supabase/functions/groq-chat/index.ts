@@ -707,8 +707,76 @@ serve(async (request: Request): Promise<Response> => {
   try {
     const { user, userClient } = await requireUser(request)
     const service = serviceClient()
-    const body = (await request.json()) as ChatBody
-    const { conversation_id: conversationId } = body
+    const body = (await request.json()) as ChatBody | { action: 'parse_grocery'; text: string }
+
+    // --- Ação rápida: Extração e separação inteligente de itens de mercado com IA ---
+    if ('action' in body && body.action === 'parse_grocery') {
+      const text = String((body as { text?: string }).text ?? '').trim()
+      if (!text) return jsonResponse({ items: [] })
+
+      const { data: config } = await service
+        .from('ai_config_fh')
+        .select('encrypted_key,model')
+        .eq('config_id', 'global')
+        .maybeSingle()
+      const cfg = config as { encrypted_key: string | null; model: string } | null
+
+      const groqKey = cfg?.encrypted_key
+        ? await decryptText(cfg.encrypted_key)
+        : Deno.env.get('GROQ_API_KEY')?.trim()
+      if (!groqKey) return jsonResponse({ error: 'NO_KEY' }, 400)
+      const model = cfg?.model ?? 'openai/gpt-oss-20b'
+
+      const prompt = `Você é um assistente de organização doméstica.
+O usuário ditou por voz itens para adicionar na lista de compras: "${text}"
+
+Identifique todos os produtos de mercado mencionados e retorne APENAS um array JSON de strings com os nomes limpos, individuais e formatados (primeira letra maiúscula).
+Regras obrigatórias:
+1. Remova comandos como "adiciona", "comprar", "coloca", "preciso de", "também", "e".
+2. Mantenha itens compostos juntos (ex: "doce de leite" é um único item, "pão de forma" é um único item, "azeite de oliva" é um único item).
+3. Separe itens distintos em posições diferentes do array.
+4. Retorne EXCLUSIVAMENTE o array JSON puro, sem crases markdown (\`\`\`), sem textos adicionais.
+
+Exemplo de entrada: "adiciona pipoca doce de leite e jabuticaba"
+Exemplo de saída: ["Pipoca", "Doce de leite", "Jabuticaba"]`
+
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${groqKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          max_completion_tokens: 300,
+        }),
+      })
+
+      if (!response.ok) return jsonResponse({ error: 'GROQ_ERROR' }, 502)
+
+      const groqData = await response.json()
+      const rawContent = groqData.choices?.[0]?.message?.content?.trim() ?? '[]'
+      let items: string[] = []
+      try {
+        const cleanJson = rawContent
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/```$/i, '')
+          .trim()
+        const parsed = JSON.parse(cleanJson)
+        if (Array.isArray(parsed)) {
+          items = parsed.map((item) => String(item).trim()).filter(Boolean)
+        }
+      } catch {
+        items = rawContent
+          .split(/[\n,]+/)
+          .map((s: string) => s.replace(/^[-*•\d.]+\s*/, '').trim())
+          .filter(Boolean)
+      }
+
+      return jsonResponse({ items })
+    }
+
+    const { conversation_id: conversationId } = body as ChatBody
     if (!conversationId) throw new HttpError(400, 'CONVERSATION_REQUIRED')
 
     const { data: conversation } = await service

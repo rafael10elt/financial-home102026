@@ -3,6 +3,7 @@ import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
 import { useI18n } from '../i18n'
 import { useVoice } from '../assistant/useVoice'
+import { env } from '../config/env'
 import { Button } from './Button'
 import { Card, CardTitle } from './Card'
 import { Modal } from './Modal'
@@ -20,13 +21,11 @@ export function GroceryListWidget() {
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [aiProcessing, setAiProcessing] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const lastLoadError = useRef<string | null>(null)
-
-  const voice = useVoice((transcript) => {
-    setName((prev) => (prev ? `${prev} ${transcript}` : transcript))
-  })
+  const audioTranscriptRef = useRef('')
 
   const refresh = useCallback(async () => {
     if (!supabase || !householdId) { setItems([]); setLoading(false); return }
@@ -52,9 +51,89 @@ export function GroceryListWidget() {
     return () => window.clearInterval(timer)
   }, [refresh])
 
+  const processAudioWithAi = async (spokenText: string) => {
+    const clean = spokenText.trim()
+    if (!clean || !supabase || !householdId || !user) return
+    setAiProcessing(true)
+    try {
+      const base = `${env.supabaseUrl.replace(/\/$/, '')}/functions/v1`
+      const response = await fetch(`${base}/groq-chat`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          apikey: env.supabaseAnonKey,
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+          'x-profile-id': user.id,
+        },
+        body: JSON.stringify({ action: 'parse_grocery', text: clean }),
+      })
+
+      const data = await response.json()
+      if (!response.ok || !Array.isArray(data?.items)) {
+        throw new Error(data?.error ?? 'Não foi possível interpretar o áudio.')
+      }
+
+      const parsedItems: string[] = data.items
+      if (parsedItems.length === 0) {
+        notify('info', t('overview.grocery.title'), 'Nenhum item identificado na fala.')
+        return
+      }
+
+      const payload = parsedItems.map((itemName) => ({
+        household_id: householdId,
+        name: itemName,
+        created_by: user.id,
+      }))
+
+      const { error: insertError } = await supabase.from('grocery_items_fh').insert(payload)
+      if (insertError) throw new Error(insertError.message)
+
+      await refresh()
+      notify('success', t('overview.grocery.title'), `${parsedItems.length} item(ns) adicionado(s): ${parsedItems.join(', ')}`)
+    } catch (err: unknown) {
+      notify('error', t('overview.grocery.title'), err instanceof Error ? err.message : 'Falha ao processar com IA.')
+    } finally {
+      setAiProcessing(false)
+      audioTranscriptRef.current = ''
+    }
+  }
+
+  const voice = useVoice((finalText) => {
+    if (finalText) {
+      audioTranscriptRef.current = finalText
+    }
+  })
+
+  // Detecta quando a fala terminou automaticamente pelo navegador
+  const prevListening = useRef(voice.listening)
+  useEffect(() => {
+    if (prevListening.current && !voice.listening) {
+      const textToProcess = audioTranscriptRef.current || voice.transcript
+      if (textToProcess && !aiProcessing) {
+        void processAudioWithAi(textToProcess)
+      }
+    }
+    prevListening.current = voice.listening
+  }, [voice.listening, voice.transcript, aiProcessing])
+
+  const handleMicClick = () => {
+    if (voice.listening) {
+      voice.stopListening()
+      setTimeout(() => {
+        const textToProcess = audioTranscriptRef.current || voice.transcript
+        if (textToProcess && !aiProcessing) {
+          void processAudioWithAi(textToProcess)
+        }
+      }, 250)
+    } else {
+      audioTranscriptRef.current = ''
+      voice.startListening()
+    }
+  }
+
+  // Adição manual digitada
   async function addItem(event: FormEvent) {
     event.preventDefault()
-    voice.stopListening()
     const cleanName = name.trim().slice(0, 120)
     if (!cleanName || !supabase || !householdId || !user) return
     setBusy(true)
@@ -92,21 +171,43 @@ export function GroceryListWidget() {
           <CardTitle>{t('overview.grocery.title')}</CardTitle>
           {checkedCount > 0 && <Button size="sm" variant="secondary" disabled={busy} onClick={() => setConfirmClear(true)}>{t('overview.grocery.clearChecked', { count: checkedCount })}</Button>}
         </div>
+
         <form className="mt-3 flex gap-2" onSubmit={(event) => void addItem(event)}>
-          <input className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm" maxLength={120} value={voice.transcript || name} onChange={(event) => setName(event.target.value)} placeholder={t('overview.grocery.placeholder')} aria-label={t('overview.grocery.placeholder')} />
+          <input
+            className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+            maxLength={120}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={t('overview.grocery.placeholder')}
+            aria-label={t('overview.grocery.placeholder')}
+            disabled={aiProcessing}
+          />
           {voice.supportedRecognition && (
             <Button
               type="button"
               variant={voice.listening ? 'destructive' : 'secondary'}
-              onClick={() => (voice.listening ? voice.stopListening() : voice.startListening())}
-              aria-label={voice.listening ? 'Parar gravação' : 'Gravar por voz'}
-              title={voice.listening ? 'Ouvindo...' : 'Falar item'}
+              onClick={handleMicClick}
+              disabled={busy || aiProcessing}
+              aria-label={voice.listening ? 'Concluir fala e processar com IA' : 'Falar lista com IA'}
+              title={voice.listening ? 'Clique para concluir e processar' : 'Gravar por voz (IA)'}
             >
-              {voice.listening ? '●' : '🎤'}
+              {voice.listening ? '■' : '🎤'}
             </Button>
           )}
-          <Button type="submit" aria-label={t('overview.grocery.add')} disabled={busy || !(voice.transcript || name).trim()}>＋</Button>
+          <Button type="submit" aria-label={t('overview.grocery.add')} disabled={busy || aiProcessing || !name.trim()}>＋</Button>
         </form>
+
+        {voice.listening && (
+          <p className="mt-2 animate-pulse text-xs text-destructive" role="status">
+            ● Ouvindo... Fale os itens e clique no botão para concluir.
+          </p>
+        )}
+        {aiProcessing && (
+          <p className="mt-2 animate-pulse text-xs text-primary" role="status">
+            ✦ IA organizando e separando os itens da lista...
+          </p>
+        )}
+
         {loadError && <p className="mt-3 text-sm text-destructive" role="alert">{t('overview.grocery.unavailable')}</p>}
         {loading ? <p className="mt-3 text-sm text-muted-foreground">{t('common.loading')}</p> : loadError ? null : items.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{t('overview.grocery.empty')}</p> : (
           <ul className="mt-3 flex flex-col divide-y divide-[var(--border)]">
