@@ -50,7 +50,7 @@ export function jsonResponse(body: unknown, status = 200): Response {
     headers: {
       'content-type': 'application/json',
       'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'authorization, apikey, content-type, x-profile-id',
+      'access-control-allow-headers': 'authorization, apikey, content-type, x-profile-id, x-client-info',
       'access-control-allow-methods': 'POST, OPTIONS',
     },
   })

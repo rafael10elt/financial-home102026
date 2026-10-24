@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/context'
+import { env } from '../config/env'
 
 export type PushState =
   | { status: 'unsupported' }
@@ -137,11 +138,22 @@ export function usePush(): PushState & {
   }
 
   async function sendTest(): Promise<{ sent: number; failed: number }> {
-    if (!supabase) throw new Error('Supabase não configurado.')
-    const { data, error } = await supabase.functions.invoke('push-test', { body: {} })
-    if (error) throw error
-    return data as { sent: number; failed: number }
-  }
+  if (!user) throw new Error('Perfil não selecionado.')
+  const base = `${env.supabaseUrl.replace(/\/$/, '')}/functions/v1`
+  const response = await fetch(`${base}/push-test`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: env.supabaseAnonKey,
+      Authorization: `Bearer ${env.supabaseAnonKey}`,
+      'x-profile-id': user.id,
+    },
+    body: JSON.stringify({}),
+  })
 
-  return { ...state, subscribe, unsubscribe, refresh, sendTest }
+  const data = await response.json()
+  if (!response.ok) {
+    throw new Error(data?.error ?? 'Falha ao enviar notificação de teste.')
+  }
+  return data as { sent: number; failed: number }
 }
