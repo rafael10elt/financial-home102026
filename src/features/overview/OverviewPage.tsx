@@ -14,7 +14,7 @@ import { PhasePlaceholder } from '../../ui/PhasePlaceholder'
 import { ClocksWidget } from '../../ui/ClocksWidget'
 import { WeatherWidget } from '../../ui/WeatherWidget'
 import { TransactionDialog } from '../finance/FinanceDialogs'
-import { useToast } from '../../ui/ToastProvider'
+import { useToast } from '../../ui/toastContext'
 
 const DEFAULT_WIDGETS = [
   'clocks',

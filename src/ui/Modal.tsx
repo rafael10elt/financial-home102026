@@ -17,7 +17,10 @@ export function Modal({
   const { t } = useI18n()
   const dialogRef = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {

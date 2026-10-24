@@ -1,18 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/context'
 import { useI18n } from '../../i18n'
 import { getSupabase, getSupabaseForProfile } from '../../supabase/client'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
-import { useToast } from '../../ui/ToastProvider'
+import { useToast } from '../../ui/toastContext'
 
 export function LoginPage() {
   const { t } = useI18n()
   const { selectProfile, status } = useAuth()
   const { notify } = useToast()
   const navigate = useNavigate()
-  const configuredNames = (import.meta.env.VITE_PROFILES || 'Jéssica,Rafael')
-    .split(',').map((name: string) => name.trim()).filter(Boolean)
+  const configuredNames = useMemo(
+    () => (import.meta.env.VITE_PROFILES || 'Jéssica,Rafael')
+      .split(',').map((name: string) => name.trim()).filter(Boolean),
+    [],
+  )
   const [profiles, setProfiles] = useState<{ id: string; name: string; avatar: string | null }[]>(
     configuredNames.map((name) => ({ id: name, name, avatar: null })),
   )
@@ -46,7 +49,7 @@ export function LoginPage() {
       if (!cancelled) setProfiles(entries)
     })()
     return () => { cancelled = true }
-  }, [status])
+  }, [status, configuredNames])
   async function chooseProfile(name: string) {
     setError(null)
     setBusy(true)

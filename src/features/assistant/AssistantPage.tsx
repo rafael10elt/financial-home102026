@@ -7,16 +7,47 @@ import { useDiaryData } from '../../diary/useDiary'
 import { buildDigest } from '../../assistant/digest'
 import { useAssistantData } from '../../assistant/useAssistant'
 import { useVoice } from '../../assistant/useVoice'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Button } from '../../ui/Button'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Field, Input } from '../../ui/Input'
+import { Modal } from '../../ui/Modal'
+import { useToast } from '../../ui/toastContext'
+import type { PendingConfirmation } from '../../assistant/tools'
 
 type Tab = 'chat' | 'memory' | 'automations'
+
+const assistantMarkdownComponents: Components = {
+  h1: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold first:mt-0">{children}</h3>,
+  h2: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold first:mt-0">{children}</h3>,
+  h3: ({ children }) => <h4 className="mb-1 mt-3 font-semibold first:mt-0">{children}</h4>,
+  p: ({ children }) => <p className="my-2 leading-6 last:mb-0">{children}</p>,
+  ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5 marker:text-primary">{children}</ul>,
+  ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5 marker:text-primary">{children}</ol>,
+  li: ({ children }) => <li className="pl-0.5">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+  blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-primary/60 pl-3 text-muted-foreground">{children}</blockquote>,
+  a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2">{children}</a>,
+  table: ({ children }) => <div className="my-3 max-w-full overflow-hidden rounded-md border border-border"><table className="w-full table-fixed border-collapse text-left text-xs">{children}</table></div>,
+  thead: ({ children }) => <thead className="bg-background/70">{children}</thead>,
+  th: ({ children }) => <th className="break-words border-b border-border px-2 py-1.5 font-semibold">{children}</th>,
+  td: ({ children }) => <td className="break-words border-b border-border px-2 py-1.5 align-top">{children}</td>,
+  code: ({ children, className }) => <code className={className ?? 'rounded bg-background/70 px-1 py-0.5 font-mono text-xs'}>{children}</code>,
+  pre: ({ children }) => <pre className="my-2 max-w-full overflow-x-auto rounded-md bg-background/70 p-3 text-xs">{children}</pre>,
+  hr: () => <hr className="my-3 border-border" />,
+}
+
+function hideInternalIds(content: string): string {
+  return content.replace(/\b[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\b/gi, '')
+}
 
 export function AssistantPage() {
   const { t } = useI18n()
   const assistant = useAssistantData()
+  const { notify } = useToast()
   const [tab, setTab] = useState<Tab>('chat')
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null)
   const [input, setInput] = useState('')
   const [chatError, setChatError] = useState<string | null>(null)
   const [memoryDraft, setMemoryDraft] = useState('')
@@ -43,14 +74,19 @@ export function AssistantPage() {
     const result = await assistant.sendMessage(text)
     if (!result.ok) {
       const kind = assistant.errorKind(result.code)
-      if (kind === 'no-key') setChatError(t('ai.noKey'))
-      else if (kind === 'invalid') setChatError(t('ai.error.invalid'))
-      else if (kind === 'quota') setChatError(t('ai.error.quota'))
-      else if (kind === 'model') setChatError(t('ai.error.model'))
-      else if (kind === 'session') setChatError(t('ai.error.session'))
+      let message = t('ai.error.unknown')
+      if (kind === 'no-key') message = t('ai.noKey')
+      else if (kind === 'invalid') message = t('ai.error.invalid')
+      else if (kind === 'quota') message = t('ai.error.quota')
+      else if (kind === 'model') message = t('ai.error.model')
+      else if (kind === 'session') message = t('ai.error.session')
       else if (result.code === 'FUNCTIONS_UNCONFIGURED' || result.code === 'CONVERSATION_FAILED') {
-        setChatError(t('ai.backendMissing'))
-      } else setChatError(t('ai.error.unknown'))
+        message = t('ai.backendMissing')
+      }
+      setChatError(message)
+      notify('error', 'Não consegui concluir a solicitação', message)
+    } else if (result.confirmations.length > 0) {
+      notify('info', 'Ação aguardando sua confirmação', 'Revise a prévia antes de autorizar a alteração.')
     }
   }
 
@@ -61,7 +97,10 @@ export function AssistantPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">{t('ai.title')}</h1>
         <div className="ml-auto">
-          <Button size="sm" variant="secondary" onClick={() => void assistant.newConversation()}>
+          <Button size="sm" variant="secondary" onClick={() => void assistant.newConversation().then((id) => {
+            if (id) notify('success', 'Nova conversa iniciada')
+            else notify('error', 'Não foi possível iniciar uma conversa')
+          }).catch((error: unknown) => notify('error', 'Não foi possível iniciar uma conversa', error instanceof Error ? error.message : String(error)))}>
             {t('ai.newChat')}
           </Button>
         </div>
@@ -130,7 +169,9 @@ export function AssistantPage() {
                         : 'self-start rounded-lg border border-border bg-muted px-3 py-2 text-sm'
                     }
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {message.role === 'assistant'
+                      ? <div className="max-w-full break-words"><ReactMarkdown remarkPlugins={[remarkGfm]} components={assistantMarkdownComponents}>{hideInternalIds(message.content)}</ReactMarkdown></div>
+                      : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
                     {message.role === 'assistant' && (
                       <button
                         type="button"
@@ -152,7 +193,7 @@ export function AssistantPage() {
                         <Button
                           size="sm"
                           disabled={assistant.sending}
-                          onClick={() => void assistant.confirmAction(pending.action_id).then(() => assistant.reload())}
+                          onClick={() => setPendingConfirmation(pending)}
                         >
                           {t('ai.confirmYes')}
                         </Button>
@@ -216,6 +257,28 @@ export function AssistantPage() {
               <p className="mt-1 text-xs text-muted-foreground">{t('ai.voiceUnsupported')}</p>
             )}
           </Card>
+          {pendingConfirmation && (
+            <Modal title={t('ai.confirmTitle')} onClose={() => setPendingConfirmation(null)}>
+              <p className="text-sm text-muted-foreground">{t('ai.confirmBody')}</p>
+              <p className="mt-3 break-words rounded-md bg-muted p-3 text-sm">{pendingConfirmation.preview}</p>
+              <p className="mt-2 text-xs text-muted-foreground">Ação: {pendingConfirmation.tool}</p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setPendingConfirmation(null)}>{t('common.cancel')}</Button>
+                <Button disabled={assistant.sending} onClick={() => void assistant.confirmAction(pendingConfirmation.action_id).then((result) => {
+                  setPendingConfirmation(null)
+                  if (result.ok) {
+                    notify('success', 'Ação concluída', result.reply)
+                    assistant.reload()
+                  } else {
+                    notify('error', 'A ação não foi concluída', result.detail ?? result.code)
+                  }
+                }).catch((error: unknown) => {
+                  setPendingConfirmation(null)
+                  notify('error', 'A ação não foi concluída', error instanceof Error ? error.message : String(error))
+                })}>{t('ai.confirmYes')}</Button>
+              </div>
+            </Modal>
+          )}
         </div>
       )}
 
@@ -263,6 +326,8 @@ function MemoryTab({
 }) {
   const { t } = useI18n()
   const assistant = useAssistantData()
+  const { notify } = useToast()
+  const [deletingMemory, setDeletingMemory] = useState<{ id: string; content: string } | null>(null)
 
   return (
     <div className="flex flex-col gap-3">
@@ -295,12 +360,14 @@ function MemoryTab({
                     <Button
                       size="sm"
                       variant="secondary"
-                      onClick={() =>
-                        void assistant.updateMemory(memory.id, { content: editingContent.slice(0, 1000) }).then(() => {
+                      onClick={() => void assistant.updateMemory(memory.id, { content: editingContent.slice(0, 1000) }).then((result) => {
+                        if (result.error) notify('error', 'Não foi possível atualizar a memória', result.error)
+                        else {
+                          notify('success', 'Memória atualizada')
                           setEditingMemory(null)
                           assistant.reload()
-                        })
-                      }
+                        }
+                      }).catch((error: unknown) => notify('error', 'Não foi possível atualizar a memória', error instanceof Error ? error.message : String(error)))}
                     >
                       {t('common.save')}
                     </Button>
@@ -319,16 +386,20 @@ function MemoryTab({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() =>
-                      void assistant.updateMemory(memory.id, { active: !memory.active }).then(() => assistant.reload())
-                    }
+                    onClick={() => void assistant.updateMemory(memory.id, { active: !memory.active }).then((result) => {
+                      if (result.error) notify('error', 'Não foi possível alterar a memória', result.error)
+                      else {
+                        notify('success', memory.active ? 'Memória desativada' : 'Memória ativada')
+                        assistant.reload()
+                      }
+                    }).catch((error: unknown) => notify('error', 'Não foi possível alterar a memória', error instanceof Error ? error.message : String(error)))}
                   >
                     {memory.active ? t('ai.memoryDisable') : t('ai.memoryEnable')}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => void assistant.deleteMemory(memory.id).then(() => assistant.reload())}
+                    onClick={() => setDeletingMemory({ id: memory.id, content: memory.content })}
                   >
                     {t('ai.memoryDelete')}
                   </Button>
@@ -352,10 +423,14 @@ function MemoryTab({
             size="sm"
             onClick={() =>
               memoryDraft.trim()
-                ? void assistant.saveMemory(memoryDraft.trim()).then(() => {
-                    setMemoryDraft('')
-                    assistant.reload()
-                  })
+                ? void assistant.saveMemory(memoryDraft.trim()).then((result) => {
+                    if (result.error) notify('error', 'Não foi possível salvar a memória', result.error)
+                    else {
+                      setMemoryDraft('')
+                      assistant.reload()
+                      notify('success', 'Memória salva')
+                    }
+                  }).catch((error: unknown) => notify('error', 'Não foi possível salvar a memória', error instanceof Error ? error.message : String(error)))
                 : undefined
             }
           >
@@ -363,6 +438,25 @@ function MemoryTab({
           </Button>
         </div>
       </Card>
+      {deletingMemory && (
+        <Modal title="Excluir memória?" onClose={() => setDeletingMemory(null)}>
+          <p className="break-words text-sm text-muted-foreground">{deletingMemory.content}</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeletingMemory(null)}>{t('common.cancel')}</Button>
+            <Button variant="destructive" onClick={() => void assistant.deleteMemory(deletingMemory.id).then((result) => {
+              setDeletingMemory(null)
+              if (result.error) notify('error', 'Não foi possível excluir a memória', result.error)
+              else {
+                assistant.reload()
+                notify('success', 'Memória excluída')
+              }
+            }).catch((error: unknown) => {
+              setDeletingMemory(null)
+              notify('error', 'Não foi possível excluir a memória', error instanceof Error ? error.message : String(error))
+            })}>{t('ai.memoryDelete')}</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -392,6 +486,8 @@ function AutomationsTab({
   const finance = useFinanceData()
   const diary = useDiaryData()
   const { user } = useAuth()
+  const { notify } = useToast()
+  const [deletingWebhook, setDeletingWebhook] = useState<string | null>(null)
 
   const digest = buildDigest({
     date: new Date().toISOString().slice(0, 10),
@@ -426,14 +522,18 @@ function AutomationsTab({
         body: digestJson,
       })
       if (!response.ok) {
-        setWebhookMsg(t('ai.webhookFailed', { message: `HTTP ${response.status}` }))
+        const detail = t('ai.webhookFailed', { message: `HTTP ${response.status}` })
+        setWebhookMsg(detail)
+        notify('error', 'Falha ao enviar o resumo', detail)
         return
       }
-      setWebhookMsg(t('ai.webhookSent', { status: response.status }))
+      const detail = t('ai.webhookSent', { status: response.status })
+      setWebhookMsg(detail)
+      notify('success', 'Resumo enviado', detail)
     } catch (error) {
-      setWebhookMsg(
-        t('ai.webhookFailed', { message: error instanceof Error ? error.message : String(error) }),
-      )
+      const detail = t('ai.webhookFailed', { message: error instanceof Error ? error.message : String(error) })
+      setWebhookMsg(detail)
+      notify('error', 'Falha ao enviar o resumo', detail)
     }
   }
 
@@ -469,11 +569,15 @@ function AutomationsTab({
             onClick={() =>
               void assistant
                 .saveWebhook({ name: webhookName.trim(), url: webhookUrl.trim(), events: ['digest'], active: true }, null)
-                .then(() => {
-                  setWebhookName('')
-                  setWebhookUrl('')
-                  assistant.reload()
-                })
+                .then((result) => {
+                  if (result.error) notify('error', 'Não foi possível salvar a automação', result.error)
+                  else {
+                    setWebhookName('')
+                    setWebhookUrl('')
+                    assistant.reload()
+                    notify('success', 'Automação salva')
+                  }
+                }).catch((error: unknown) => notify('error', 'Não foi possível salvar a automação', error instanceof Error ? error.message : String(error)))
             }
           >
             {t('ai.webhookSave')}
@@ -485,7 +589,8 @@ function AutomationsTab({
               void navigator.clipboard.writeText(digestJson).then(() => {
                 setCopied(true)
                 setTimeout(() => setCopied(false), 2000)
-              })
+                notify('success', 'Resumo copiado')
+              }).catch((error: unknown) => notify('error', 'Não foi possível copiar o resumo', error instanceof Error ? error.message : String(error)))
             }}
           >
             {copied ? t('ai.webhookCopied') : t('ai.webhookCopy')}
@@ -512,13 +617,33 @@ function AutomationsTab({
                 <Button size="sm" variant="secondary" onClick={() => void sendToWebhook(hook.url)}>
                   {t('ai.webhookSend')}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => void assistant.deleteWebhook(hook.id).then(() => assistant.reload())}>
+                <Button size="sm" variant="ghost" onClick={() => setDeletingWebhook(hook.id)}>
                   {t('agenda.delete')}
                 </Button>
               </div>
             </div>
           </Card>
         ))
+      )}
+
+      {deletingWebhook && (
+        <Modal title="Excluir automação?" onClose={() => setDeletingWebhook(null)}>
+          <p className="text-sm text-muted-foreground">Esta ação removerá o webhook salvo. O workflow no n8n não será apagado.</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeletingWebhook(null)}>{t('common.cancel')}</Button>
+            <Button variant="destructive" onClick={() => void assistant.deleteWebhook(deletingWebhook).then((result) => {
+              setDeletingWebhook(null)
+              if (result.error) notify('error', 'Não foi possível excluir a automação', result.error)
+              else {
+                assistant.reload()
+                notify('success', 'Automação excluída')
+              }
+            }).catch((error: unknown) => {
+              setDeletingWebhook(null)
+              notify('error', 'Não foi possível excluir a automação', error instanceof Error ? error.message : String(error))
+            })}>{t('agenda.delete')}</Button>
+          </div>
+        </Modal>
       )}
 
       {webhookMsg && (

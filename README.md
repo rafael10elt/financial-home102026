@@ -132,6 +132,41 @@ passam a usá-la; substituí-la nessa tela atualiza a chave para todos.
 projeto ainda estiver ativa em algum lugar, gere uma nova no painel da Groq
 e troque pela tela de configurações (a antiga pode ser revogada na Groq).
 
+### Respostas, confirmações e erros
+
+As respostas do chat renderizam Markdown seguro (títulos, listas, negrito,
+links e tabelas compactas) para manter resumos e listas legíveis em celular.
+A governanta deve priorizar texto direto, valores formatados e observações
+baseadas em dados reais, sem expor IDs técnicos. Ações propostas são revisadas
+num modal antes de executar; erros e confirmações relevantes aparecem também
+como toast.
+
+Para atualizar o prompt e as regras de resposta na função, execute na raiz:
+
+```powershell
+supabase functions deploy groq-chat
+```
+
+### Verificação final local
+
+Na validação desta rodada, estes comandos foram executados:
+
+```powershell
+npm test -- --maxWorkers=1 --fileParallelism=false
+npm run lint
+npm run build
+npm audit
+```
+
+Antes de liberar uma versão, ainda confirme manualmente no ambiente de produção:
+
+- publique `groq-chat` e valide uma consulta e um resumo com dados conhecidos;
+- entre com os dois perfis e verifique permissões e visibilidade pessoal;
+- confira as migrações pendentes no Supabase e faça/valide um backup antes de
+  alterações destrutivas;
+- publique no Netlify e verifique instalação PWA, comportamento offline e
+  telas mobile.
+
 ## Automações (n8n)
 
 O app funciona sem o n8n. Para conectar:

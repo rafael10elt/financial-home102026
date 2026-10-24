@@ -1418,3 +1418,35 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
   somente esse bloco. Nenhuma alteração remota foi executada.
 - Próximo passo: aplicar FH-SQL-011 no SQL Editor do Supabase; após isso a
   escolha de avatar fica persistida para o perfil em todos os navegadores.
+
+## Rodada 024 — Respostas legíveis da IA e verificação final local
+
+**Data:** 2026-10-24
+
+- A captura mostrava tabelas Markdown, delimitadores de negrito e UUIDs expostos
+  como texto cru. O chat agora renderiza Markdown seguro com suporte GitHub
+  Flavored Markdown, listas, títulos, blocos de código, links e tabelas contidas
+  na largura da mensagem.
+- Prompt da governanta reforça resposta direta, parágrafos/listas curtos,
+  formatação de moeda e data, insights limitados aos dados observados e
+  proibição de expor IDs, JSON bruto ou formato de ferramentas. Tabelas são
+  desencorajadas em respostas para evitar leitura ruim em celulares.
+- Erros de chat geram toast além da mensagem contextual; ações sensíveis têm
+  toast de aviso e exigem confirmação em modal, com toast de resultado. Memórias
+  e webhooks também usam modais de exclusão e toasts de sucesso/erro.
+- O context de toasts foi separado do componente para remover o último aviso do
+  lint e facilitar sua reutilização.
+- Etapa 7 do Mapa da Verdade: suíte existente passou (20 arquivos, 107 testes),
+  lint passou sem erros (após refatorar o contexto de toast), build passou e
+  `npm audit` reportou zero vulnerabilidades. A build mantém aviso de chunk
+  inicial >500 kB; o bundle do PDF é o principal candidato para code splitting.
+- `undici`, dependência de desenvolvimento transitiva do jsdom, foi atualizada
+  dentro da faixa compatível após o audit inicial detectar versão vulnerável.
+- `README.md` registra formato das respostas, confirmação/toasts, comandos de
+  validação e checklist de publicação/backup.
+- Nenhum comando Supabase, SQL remoto ou deploy foi executado. Não houve mudança
+  de banco nesta rodada. Para aplicar o novo prompt, publicar
+  `supabase functions deploy groq-chat`; validar no Supabase e Netlify continua
+  pendente até a publicação/validação manual do ambiente.
+- Próximo passo da Fase 7: publicar a Edge Function, validar os fluxos com os
+  dois perfis em produção, confirmar backup recuperável e revisar PWA/offline.

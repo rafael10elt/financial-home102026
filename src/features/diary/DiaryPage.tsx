@@ -15,7 +15,7 @@ import { Button } from '../../ui/Button'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Field, Input } from '../../ui/Input'
 import { Modal } from '../../ui/Modal'
-import { useToast } from '../../ui/ToastProvider'
+import { useToast } from '../../ui/toastContext'
 import { AnnouncementDialog, GossipDialog, MoodDialog, PostDialog, TipDialog } from './DiaryDialogs'
 
 type Tab = 'feed' | 'memories' | 'photos' | 'mood' | 'tips' | 'announcements' | 'gossip'
@@ -72,10 +72,7 @@ export function DiaryPage() {
   const [loginPhotoSlot, setLoginPhotoSlot] = useState<number | null>(null)
 
   useEffect(() => {
-    if (!supabase || !user) {
-      setLoginPhotoSlot(null)
-      return
-    }
+    if (!supabase || !user) return
     let cancelled = false
     void supabase.from('profiles_fh').select('login_photo_slot').eq('id', user.id).maybeSingle()
       .then(({ data }) => {

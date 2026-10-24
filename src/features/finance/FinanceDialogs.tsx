@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { useI18n } from '../../i18n'
 import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
@@ -239,20 +239,13 @@ export function TransactionDialog({
   const defaultExpenseCategory = categories.find(
     (category) => category.kind === 'expense' && category.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR') === 'alimentacao',
   ) ?? categories.find((category) => category.kind === 'expense' || !category.kind)
-  const [categoryId, setCategoryId] = useState(initial?.category_id ?? (defaultKind === 'expense' ? defaultExpenseCategory?.id ?? '' : ''))
+  const [categoryId, setCategoryId] = useState<string | null>(initial ? initial.category_id ?? '' : null)
+  const selectedCategoryId = categoryId ?? (kind === 'expense' ? defaultExpenseCategory?.id ?? '' : '')
   const [merchantId, setMerchantId] = useState(initial?.merchant_id ?? '')
   const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10))
   const [accountId, setAccountId] = useState(initial?.account_id ?? accounts[0]?.id ?? '')
   const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '')
   const [formError, setFormError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (initial || categoryId || kind !== 'expense' || categories.length === 0) return
-    const firstExpense = categories.find(
-      (category) => category.kind === 'expense' && category.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR') === 'alimentacao',
-    ) ?? categories.find((category) => category.kind === 'expense' || !category.kind)
-    if (firstExpense) setCategoryId(firstExpense.id)
-  }, [categories, categoryId, initial, kind])
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -268,7 +261,7 @@ export function TransactionDialog({
       currency,
       status,
       description: description.trim(),
-      category_id: categoryId || null,
+      category_id: selectedCategoryId || null,
       merchant_id: merchantId || null,
       date,
       paid_at: paid ? (initial?.paid_at ?? new Date().toISOString()) : null,
@@ -341,15 +334,15 @@ export function TransactionDialog({
         </Field>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <CategorySelect categories={categories} value={categoryId} kind={kind} onChange={(value) => { setCategoryId(value); setMerchantId('') }} />
+        <CategorySelect categories={categories} value={selectedCategoryId} kind={kind} onChange={(value) => { setCategoryId(value); setMerchantId('') }} />
         <PersonSelect label={t('fin.owner')} value={ownerId} members={members} onChange={setOwnerId} />
       </div>
-      {categoryId && (
+      {selectedCategoryId && (
         <Field label={t('fin.merchants.name')}>
           {(aria) => (
             <select {...aria} value={merchantId} onChange={(e) => setMerchantId(e.target.value)} className={inputClass}>
               <option value="">{t('fin.merchants.none')}</option>
-              {merchants.filter((merchant) => merchant.category_id === categoryId).map((merchant) => (
+              {merchants.filter((merchant) => merchant.category_id === selectedCategoryId).map((merchant) => (
                 <option key={merchant.id} value={merchant.id}>{merchant.name}</option>
               ))}
             </select>

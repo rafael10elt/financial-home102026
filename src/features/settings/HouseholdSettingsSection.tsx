@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useAuth } from '../../auth/context'
 import { useHousehold } from '../../household/context'
-import { useToast } from '../../ui/ToastProvider'
+import { useToast } from '../../ui/toastContext'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
@@ -14,10 +14,6 @@ export function HouseholdSettingsSection() {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (state.kind === 'ready') setName(state.household.name)
-  }, [state])
 
   async function copyCode() {
     if (state.kind !== 'ready' || !state.household.join_code) return

@@ -7,7 +7,7 @@ import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { ThemeToggle } from '../../preferences/ThemeToggle'
-import { useToast } from '../../ui/ToastProvider'
+import { useToast } from '../../ui/toastContext'
 import { Modal } from '../../ui/Modal'
 
 export function OnboardingPage() {

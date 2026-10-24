@@ -6,7 +6,7 @@ import { env } from '../../config/env'
 import { Button } from '../../ui/Button'
 import { Card, CardDescription, CardTitle } from '../../ui/Card'
 import { Field, Input } from '../../ui/Input'
-import { useToast } from '../../ui/ToastProvider'
+import { useToast } from '../../ui/toastContext'
 
 type KeyState =
   | { checked: false }
@@ -80,7 +80,6 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
 
   const refresh = useCallback(async () => {
     if (!supabase || !householdId) return
-    setBusy(true)
     try {
       const { data, status } = await callConfig(user?.id ?? '', { action: 'status' })
       if (status !== 200 || !data || data.error) {
@@ -101,16 +100,14 @@ export function GroqKeySection({ onChanged }: { onChanged: () => void }) {
       setMessage(detail)
       setMessageError(true)
       notify('error', 'Não foi possível consultar a configuração Groq', detail)
-    } finally {
-      setBusy(false)
     }
   }, [supabase, householdId, user?.id, t, notify])
 
   // Consulta o estado ao abrir/trocar de casa sem disparar efeitos durante render.
   useEffect(() => {
     if (!supabase || !householdId) return
-    setState({ checked: false })
-    void refresh()
+    const request = window.setTimeout(() => void refresh(), 0)
+    return () => window.clearTimeout(request)
   }, [supabase, householdId, refresh])
 
   const configured = state.checked && state.configured

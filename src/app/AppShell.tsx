@@ -10,7 +10,7 @@ import { pendingCount, useOutbox } from '../offline/outbox'
 import { useOnlineSync } from '../offline/useOnline'
 import { ThemeToggle } from '../preferences/ThemeToggle'
 import { Modal } from '../ui/Modal'
-import { useToast } from '../ui/ToastProvider'
+import { useToast } from '../ui/toastContext'
 
 function useUnreadCount(): number {
   const { supabase, user } = useAuth()
