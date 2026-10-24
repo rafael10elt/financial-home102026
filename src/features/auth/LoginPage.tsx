@@ -68,39 +68,43 @@ export function LoginPage() {
 
   if (status === 'loading') {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-background">
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-background px-5 text-center">
+        <img src="/icons/icon-192.png" alt="" className="size-16 object-contain" />
         <p className="text-sm text-muted-foreground">{t('auth.loading')}</p>
       </div>
     )
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-lg">
-        <div className="mb-6 flex flex-col gap-1">
-          <CardTitle className="text-xl">{t('app.name')}</CardTitle>
-          <CardDescription>Quem vai usar o Financial Home?</CardDescription>
+    <div className="flex min-h-dvh items-center justify-center bg-background px-5 py-8 sm:px-8">
+      <Card className="w-full max-w-lg border-0 bg-transparent p-0 text-center shadow-none">
+        <div className="mb-8 flex flex-col items-center gap-4 sm:mb-10">
+          <img src="/icons/icon-192.png" alt="" className="size-16 object-contain sm:size-20" />
+          <div className="flex flex-col items-center gap-2">
+            <CardTitle className="text-2xl sm:text-3xl">{t('app.name')}</CardTitle>
+            <CardDescription className="text-base">Quem vai usar o Financial Home?</CardDescription>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="mx-auto grid w-full max-w-sm grid-cols-2 gap-3 sm:max-w-md sm:gap-8">
           {profiles.map(({ id, name, avatar }, index) => (
             <button key={id} type="button" aria-busy={busy} disabled={busy} onClick={() => void chooseProfile(name)}
-              className="flex min-h-36 flex-col items-center justify-center gap-3 rounded-xl border border-border bg-background p-5 transition hover:border-primary hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+              className="group flex min-h-36 min-w-0 flex-col items-center justify-center gap-3 rounded-2xl p-3 transition hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:min-h-44 sm:gap-4 sm:p-5">
               {avatar
-                ? <img src={avatar} alt="" className="size-16 rounded-full object-cover" />
-                : <span className={`flex size-16 items-center justify-center rounded-full text-lg font-semibold text-white ${index % 2 ? 'bg-sky-700' : 'bg-rose-700'}`} aria-hidden="true">
+                ? <img src={avatar} alt="" className="size-20 rounded-full object-cover ring-2 ring-border transition group-hover:ring-primary sm:size-24" />
+                : <span className={`flex size-20 items-center justify-center rounded-full text-xl font-semibold text-white ring-2 ring-border transition group-hover:ring-primary sm:size-24 ${index % 2 ? 'bg-sky-700' : 'bg-rose-700'}`} aria-hidden="true">
                     {name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toLocaleUpperCase('pt-BR')}
                   </span>}
-              <span className="text-sm font-medium">{name}</span>
+              <span className="max-w-full truncate text-base font-semibold">{name}</span>
             </button>
           ))}
         </div>
         {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="mt-4 text-center text-sm text-destructive">
               {error}
             </p>
           )}
         {busy && <p role="status" className="mt-4 text-center text-sm text-muted-foreground">{t('common.loading')}</p>}
-        <p className="mt-5 text-xs text-muted-foreground">Escolha seu perfil para continuar. A identificação fica salva neste navegador.</p>
+        <p className="mx-auto mt-7 max-w-sm text-center text-sm leading-relaxed text-muted-foreground">Escolha seu perfil para continuar. A identificação fica salva neste navegador.</p>
       </Card>
     </div>
   )

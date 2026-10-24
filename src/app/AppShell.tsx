@@ -90,7 +90,9 @@ export function AppShell() {
     <div className="min-h-dvh bg-background text-foreground">
       <header className="border-b border-border bg-card">
         <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3">
-          <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            <img src="/icons/icon-192.png" alt="" className="size-9 rounded-lg object-cover" />
+            <div className="flex flex-col">
             <span className="text-sm font-semibold">{t('app.name')}</span>
             {householdName ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -106,6 +108,7 @@ export function AppShell() {
             ) : (
               <span className="text-xs text-muted-foreground">{t('house.waiting')}</span>
             )}
+            </div>
           </div>
 
           <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:gap-2">

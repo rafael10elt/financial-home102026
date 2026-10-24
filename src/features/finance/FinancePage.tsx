@@ -25,6 +25,7 @@ import {
 } from './FinanceDialogs'
 import { ImportWizard } from './ImportWizard'
 import { FinanceCategoriesPanel } from './FinanceCategoriesPanel'
+import { useToast } from '../../ui/toastContext'
 
 type Tab = 'summary' | 'transactions' | 'categories' | 'recurrences' | 'transfers' | 'goals' | 'exchange' | 'import'
 
@@ -32,28 +33,41 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-function monthStart(): string {
-  return new Date().toISOString().slice(0, 8) + '01'
+function localDateKey(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
-function endOfNextMonth(): string {
+function yearAhead(): string {
   const now = new Date()
-  const end = new Date(now.getFullYear(), now.getMonth() + 2, 0)
-  return end.toISOString().slice(0, 10)
+  const end = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate())
+  return localDateKey(end)
+}
+
+function currentMonthRange(): { start: string; end: string } {
+  const now = new Date()
+  return {
+    start: localDateKey(new Date(now.getFullYear(), now.getMonth(), 1)),
+    end: localDateKey(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  }
 }
 
 export function FinancePage() {
   const { t } = useI18n()
+  const { notify } = useToast()
   const { user } = useAuth()
   const { state: householdState } = useHousehold()
   const finance = useFinanceData()
 
   const [tab, setTab] = useState<Tab>('summary')
-  const [period, setPeriod] = useState<'all' | 'month'>('month')
+  const [periodStart, setPeriodStart] = useState(() => currentMonthRange().start)
+  const [periodEnd, setPeriodEnd] = useState(() => currentMonthRange().end)
   const [dialog, setDialog] = useState<
     | { name: 'account'; editing: Account | null }
     | { name: 'transaction'; editing: Transaction | null; kind: 'income' | 'expense' }
-    | { name: 'recurrence' }
+    | { name: 'recurrence'; editing: import('../../finance/useFinance').FRecurrence | null }
     | { name: 'transfer' }
     | { name: 'goal'; editing: Goal | null }
     | { name: 'contribute'; goalId: string }
@@ -106,9 +120,8 @@ export function FinancePage() {
   }, [finance.rates, t])
 
   const periodTxs = useMemo(() => {
-    const start = period === 'month' ? monthStart() : '0000-01-01'
-    return finance.transactions.filter((tx) => tx.date >= start)
-  }, [finance.transactions, period])
+    return finance.transactions.filter((tx) => tx.date >= periodStart && tx.date <= periodEnd)
+  }, [finance.transactions, periodStart, periodEnd])
 
   const consolidation = useMemo(() => {
     try {
@@ -165,10 +178,17 @@ export function FinancePage() {
   async function handleDelete() {
     if (!confirmDelete) return
     setBusy(true)
-    const result = await finance.remove(confirmDelete.table, confirmDelete.id, confirmDelete.table, confirmDelete.before)
+    const result = confirmDelete.table === 'financial_recurrences_fh'
+      ? await finance.deleteRecurrence(confirmDelete.before as import('../../finance/useFinance').FRecurrence)
+      : await finance.remove(confirmDelete.table, confirmDelete.id, confirmDelete.table, confirmDelete.before)
     setBusy(false)
     setConfirmDelete(null)
-    if (result.error) setServerError(t('fin.saveError', { message: result.error }))
+    if (result.error) {
+      setServerError(t('fin.saveError', { message: result.error }))
+      notify('error', t('common.error', { message: '' }), result.error)
+    } else if (confirmDelete.table === 'financial_recurrences_fh') {
+      notify('success', t('fin.recurrence'), t('fin.recurrenceDeleted'))
+    }
   }
 
   async function handleStatus(tx: Transaction, status: 'pago' | 'recebido' | 'cancelado') {
@@ -190,12 +210,39 @@ export function FinancePage() {
   async function handleGenerate() {
     setBusy(true)
     setNotice(null)
-    const result = await finance.generateRecurrences(endOfNextMonth())
+    const result = await finance.generateRecurrences(yearAhead())
     setBusy(false)
     if (result.error) {
       setServerError(t('fin.saveError', { message: result.error }))
     } else {
       setNotice(t('fin.generated', { n: result.created }))
+      notify('success', t('fin.generate'), t('fin.generated', { n: result.created }))
+    }
+  }
+
+  async function handleSaveRecurrence(values: Record<string, unknown>, editing: import('../../finance/useFinance').FRecurrence | null) {
+    setBusy(true)
+    setServerError(null)
+    const result = await finance.saveRecurrence(values, editing?.id ?? null, yearAhead())
+    setBusy(false)
+    if (result.error) {
+      setServerError(t('fin.saveError', { message: result.error }))
+      notify('error', t('common.error', { message: '' }), result.error)
+      return
+    }
+    setDialog(null)
+    notify('success', t('fin.newRecurrence'), t('fin.recurrenceSaved'))
+  }
+
+  async function handleRecurrenceActive(recurrence: import('../../finance/useFinance').FRecurrence) {
+    setBusy(true)
+    const result = await finance.setRecurrenceActive(recurrence, !recurrence.active)
+    setBusy(false)
+    if (result.error) {
+      setServerError(t('fin.saveError', { message: result.error }))
+      notify('error', t('common.error', { message: '' }), result.error)
+    } else {
+      notify('success', t('fin.recurrence'), recurrence.active ? t('fin.recurrencePaused') : t('fin.recurrenceResumed'))
     }
   }
 
@@ -325,10 +372,21 @@ export function FinancePage() {
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{t('fin.consolidatedIn', { currency: 'EUR' })}</span>
-            <select value={period} onChange={(e) => setPeriod(e.target.value as 'all' | 'month')} className={filterClass} aria-label={t('fin.period')}>
-              <option value="month">{t('fin.period.month')}</option>
-              <option value="all">{t('fin.period.all')}</option>
-            </select>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              {t('fin.period.from')}
+              <input type="date" value={periodStart} max={periodEnd} onChange={(e) => setPeriodStart(e.target.value)} className={filterClass} />
+            </label>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              {t('fin.period.to')}
+              <input type="date" value={periodEnd} min={periodStart} onChange={(e) => setPeriodEnd(e.target.value)} className={filterClass} />
+            </label>
+            <Button size="sm" variant="secondary" onClick={() => {
+              const range = currentMonthRange()
+              setPeriodStart(range.start)
+              setPeriodEnd(range.end)
+            }}>
+              {t('common.clear')}
+            </Button>
           </div>
 
           {consolidation.error ? (
@@ -569,7 +627,7 @@ export function FinancePage() {
       {finance.status === 'ready' && tab === 'recurrences' && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => setDialog({ name: 'recurrence' })} disabled={finance.accounts.length === 0}>
+            <Button size="sm" onClick={() => setDialog({ name: 'recurrence', editing: null })} disabled={finance.accounts.length === 0}>
               {t('fin.newRecurrence')}
             </Button>
             <Button size="sm" variant="secondary" onClick={() => void handleGenerate()} disabled={busy}>
@@ -594,26 +652,21 @@ export function FinancePage() {
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1">
+                      <Button size="sm" variant="secondary" disabled={busy} onClick={() => setDialog({ name: 'recurrence', editing: recurrence })}>
+                        {t('fin.editRecurrence')}
+                      </Button>
                       <Button
                         size="sm"
                         variant="secondary"
                         disabled={busy}
-                        onClick={() =>
-                          void finance
-                            .update('financial_recurrences_fh', recurrence.id, { active: !recurrence.active })
-                            .then((r) => {
-                              if (r.error) setServerError(t('fin.saveError', { message: r.error }))
-                            })
-                        }
+                        onClick={() => void handleRecurrenceActive(recurrence)}
                       >
                         {recurrence.active ? t('fin.inactive') : t('fin.active')}
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() =>
-                          setConfirmDelete({ table: 'financial_recurrences_fh', id: recurrence.id, before: recurrence })
-                        }
+                        onClick={() => setConfirmDelete({ table: 'financial_recurrences_fh', id: recurrence.id, before: recurrence })}
                       >
                         {t('agenda.delete')}
                       </Button>
@@ -832,13 +885,14 @@ export function FinancePage() {
       )}
       {dialog?.name === 'recurrence' && (
         <RecurrenceDialog
+          initial={dialog.editing}
           accounts={finance.accounts}
           categories={finance.categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
           members={members}
           busy={busy}
           error={serverError}
           onClose={() => setDialog(null)}
-          onSave={(values) => void handleSave('financial_recurrences_fh', values, null)}
+          onSave={(values) => void handleSaveRecurrence(values, dialog.editing)}
         />
       )}
       {dialog?.name === 'transfer' && (
@@ -919,7 +973,9 @@ export function FinancePage() {
 
       {confirmDelete && (
         <Modal title={t('agenda.delete')} onClose={() => setConfirmDelete(null)}>
-          <p className="mb-4 text-sm text-muted-foreground">{t('fin.deleteConfirm')}</p>
+          <p className="mb-4 text-sm text-muted-foreground">
+            {confirmDelete.table === 'financial_recurrences_fh' ? t('fin.recurrenceDeleteConfirm') : t('fin.deleteConfirm')}
+          </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={busy}>
               {t('common.cancel')}

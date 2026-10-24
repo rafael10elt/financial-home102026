@@ -203,6 +203,21 @@ export function useAssistantData() {
     return id
   }
 
+  async function deleteConversations(ids: string[] | null): Promise<{ error: string | null; deleted: number }> {
+    if (!supabase || !user) return { error: 'Supabase não configurado.', deleted: 0 }
+    let query = supabase.from('ai_conversations_fh').delete().eq('user_id', user.id).select('id')
+    if (ids) {
+      if (ids.length === 0) return { error: null, deleted: 0 }
+      query = query.in('id', ids)
+    }
+    const { data, error } = await query
+    if (error) return { error: error.message, deleted: 0 }
+    const deletedIds = ((data ?? []) as { id: string }[]).map((row) => row.id)
+    if (deletedIds.includes(activeId ?? '')) setActiveId(null)
+    reload()
+    return { error: null, deleted: deletedIds.length }
+  }
+
   async function sendMessage(text: string): Promise<ChatResponse> {
     if (!supabase || !user || !householdId) {
       return { ok: false, code: 'FUNCTIONS_UNCONFIGURED' }
@@ -327,6 +342,7 @@ export function useAssistantData() {
     householdId,
     reload,
     newConversation,
+    deleteConversations,
     sendMessage,
     confirmAction,
     saveMemory,

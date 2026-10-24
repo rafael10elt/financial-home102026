@@ -22,7 +22,7 @@ export type PreferencesStore = PreferencesState & {
 }
 
 export const defaultPreferences: PreferencesState = {
-  theme: 'system',
+  theme: 'dark',
   fontScale: 'md',
   locale: 'pt-BR',
 }

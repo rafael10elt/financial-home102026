@@ -354,6 +354,7 @@ export function TransactionDialog({
 }
 
 export function RecurrenceDialog({
+  initial,
   accounts,
   categories,
   members,
@@ -362,6 +363,7 @@ export function RecurrenceDialog({
   onClose,
   onSave,
 }: {
+  initial: import('../../finance/useFinance').FRecurrence | null
   accounts: Account[]
   categories: Category[]
   members: Member[]
@@ -371,19 +373,19 @@ export function RecurrenceDialog({
   onSave: (values: Record<string, unknown>) => void
 }) {
   const { t } = useI18n()
-  const [kind, setKind] = useState<'income' | 'expense'>('expense')
-  const [amount, setAmount] = useState('')
-  const [currency, setCurrency] = useState(accounts[0]?.currency ?? 'EUR')
-  const [description, setDescription] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
-  const [ownerId, setOwnerId] = useState('')
-  const [frequency, setFrequency] = useState('monthly')
-  const [intervalN, setIntervalN] = useState('1')
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
-  const [endMode, setEndMode] = useState<'never' | 'date' | 'count'>('never')
-  const [endDate, setEndDate] = useState('')
-  const [endCount, setEndCount] = useState('12')
+  const [kind, setKind] = useState<'income' | 'expense'>(initial?.kind ?? 'expense')
+  const [amount, setAmount] = useState(initial?.amount ?? '')
+  const [currency, setCurrency] = useState(initial?.currency ?? accounts[0]?.currency ?? 'EUR')
+  const [description, setDescription] = useState(initial?.description ?? '')
+  const [categoryId, setCategoryId] = useState(initial?.category_id ?? '')
+  const [accountId, setAccountId] = useState(initial?.account_id ?? accounts[0]?.id ?? '')
+  const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '')
+  const [frequency, setFrequency] = useState<import('../../finance/frecurrence').FinanceFrequency>(initial?.frequency ?? 'monthly')
+  const [intervalN, setIntervalN] = useState(String(initial?.interval_n ?? 1))
+  const [startDate, setStartDate] = useState(initial?.start_date ?? new Date().toISOString().slice(0, 10))
+  const [endMode, setEndMode] = useState<'never' | 'date' | 'count'>(initial?.end_date ? 'date' : initial?.occurrence_count ? 'count' : 'never')
+  const [endDate, setEndDate] = useState(initial?.end_date ?? '')
+  const [endCount, setEndCount] = useState(String(initial?.occurrence_count ?? 12))
   const [formError, setFormError] = useState<string | null>(null)
 
   function submit(event: FormEvent) {
@@ -406,13 +408,13 @@ export function RecurrenceDialog({
       start_date: startDate,
       end_date: endMode === 'date' && endDate ? endDate : null,
       occurrence_count: endMode === 'count' ? Math.max(1, Number.parseInt(endCount, 10) || 1) : null,
-      active: true,
+      active: initial?.active ?? true,
     })
   }
 
   return (
     <Shell
-      title={t('fin.newRecurrence')}
+      title={initial ? t('fin.editRecurrence') : t('fin.newRecurrence')}
       onClose={onClose}
       busy={busy}
       error={formError ?? error}
@@ -449,7 +451,7 @@ export function RecurrenceDialog({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label={t('agenda.recurrence')}>
           {(aria) => (
-            <select {...aria} value={frequency} onChange={(e) => setFrequency(e.target.value)} className={inputClass}>
+            <select {...aria} value={frequency} onChange={(e) => setFrequency(e.target.value as import('../../finance/frecurrence').FinanceFrequency)} className={inputClass}>
               <option value="daily">{t('agenda.recurrence.daily')}</option>
               <option value="weekly">{t('agenda.recurrence.weekly')}</option>
               <option value="monthly">{t('agenda.recurrence.monthly')}</option>

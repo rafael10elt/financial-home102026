@@ -6,7 +6,8 @@
     <meta name="theme-color" content="#0f172a" />
     <meta name="description" content="Financial Home 102026 — organização doméstica, financeira e pessoal privada." />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="shortcut icon" href="/icons/icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <title>Financial Home</title>
     <script>
@@ -14,7 +15,7 @@
       ;(function () {
         try {
           var raw = localStorage.getItem('fh.preferences')
-          var theme = 'system'
+          var theme = 'dark'
           var scale = 'md'
           if (raw) {
             var parsed = JSON.parse(raw)

@@ -342,6 +342,123 @@ export function useFinanceData() {
     return { error: null }
   }
 
+  async function saveRecurrence(payload: Record<string, unknown>, id: string | null, horizon: string) {
+    if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.' }
+    const saved = id
+      ? await supabase.from('financial_recurrences_fh').update(payload).eq('id', id).select('*').single()
+      : await supabase.from('financial_recurrences_fh').insert({ ...payload, household_id: householdId, created_by: user.id }).select('*').single()
+    if (saved.error) return { error: mapError(saved.error.message) }
+    const recurrence = saved.data as FRecurrence
+    const { data: rows, error: rowsError } = await supabase
+      .from('financial_transactions_fh').select('*').eq('recurrence_id', recurrence.id)
+    if (rowsError) return { error: mapError(rowsError.message) }
+    const linked = (rows ?? []) as Transaction[]
+    const allPeriods = duePeriods({
+      frequency: recurrence.frequency,
+      interval_n: recurrence.interval_n,
+      start_date: recurrence.start_date,
+      end_date: recurrence.end_date,
+      occurrence_count: recurrence.occurrence_count,
+      active: recurrence.active,
+    }, horizon, new Set())
+    const targetByKey = new Map(allPeriods.map((period) => [period.period_key, period]))
+    const today = new Date().toISOString().slice(0, 10)
+    const pending = linked.filter((tx) => ['pendente', 'previsto'].includes(tx.status) && tx.date >= today)
+    const paidKeys = new Set(linked.filter((tx) => ['pago', 'recebido'].includes(tx.status))
+      .map((tx) => tx.period_key).filter((key): key is string => Boolean(key)))
+    for (const tx of pending) {
+      const target = tx.period_key ? targetByKey.get(tx.period_key) : undefined
+      if (!recurrence.active || !target) {
+        const { error } = await supabase.from('financial_transactions_fh').delete().eq('id', tx.id)
+        if (error) return { error: mapError(error.message) }
+      } else {
+        const { error } = await supabase.from('financial_transactions_fh').update({
+          account_id: recurrence.account_id, kind: recurrence.kind, amount: recurrence.amount,
+          currency: recurrence.currency, description: recurrence.description,
+          category_id: recurrence.category_id, owner_id: recurrence.owner_id, date: target.date,
+        }).eq('id', tx.id)
+        if (error) return { error: mapError(error.message) }
+        paidKeys.add(target.period_key)
+      }
+    }
+    if (recurrence.active) {
+      const pendingKeys = new Set([
+        ...paidKeys,
+        ...linked.filter((tx) => !pending.includes(tx)).map((tx) => tx.period_key).filter((key): key is string => Boolean(key)),
+        ...pending.filter((tx) => tx.date < today).map((tx) => tx.period_key).filter((key): key is string => Boolean(key)),
+      ])
+      for (const period of duePeriods({ ...recurrence, active: true }, horizon, pendingKeys)) {
+        const { error } = await supabase.from('financial_transactions_fh').insert({
+          household_id: householdId, created_by: user.id, account_id: recurrence.account_id,
+          kind: recurrence.kind, amount: recurrence.amount, currency: recurrence.currency,
+          status: 'pendente', description: recurrence.description, category_id: recurrence.category_id,
+          date: period.date, owner_id: recurrence.owner_id, recurrence_id: recurrence.id,
+          period_key: period.period_key,
+        })
+        if (error && !/duplicate key|unique constraint/i.test(error.message)) return { error: mapError(error.message) }
+      }
+    }
+    if (id) await audit(supabase, householdId, user.id, 'financial_recurrences_fh', id, 'update', null, payload)
+    reload()
+    return { error: null }
+  }
+
+  async function setRecurrenceActive(recurrence: FRecurrence, active: boolean) {
+    if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.' }
+    const { error } = await supabase.from('financial_recurrences_fh').update({ active }).eq('id', recurrence.id)
+    if (error) return { error: mapError(error.message) }
+    if (!active) {
+      const today = new Date().toISOString().slice(0, 10)
+      const { error: cleanupError } = await supabase.from('financial_transactions_fh').delete()
+        .eq('recurrence_id', recurrence.id).in('status', ['pendente', 'previsto']).gte('date', today)
+      if (cleanupError) return { error: mapError(cleanupError.message) }
+    } else {
+      const generated = await generateOneRecurrence({ ...recurrence, active: true }, endOfYearAhead())
+      if (generated.error) return generated
+    }
+    reload()
+    return { error: null }
+  }
+
+  async function deleteRecurrence(recurrence: FRecurrence) {
+    if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.' }
+    const { error: cleanupError } = await supabase.from('financial_transactions_fh').delete()
+      .eq('recurrence_id', recurrence.id).in('status', ['pendente', 'previsto'])
+    if (cleanupError) return { error: mapError(cleanupError.message) }
+    const { error: unlinkError } = await supabase.from('financial_transactions_fh').update({ recurrence_id: null, period_key: null })
+      .eq('recurrence_id', recurrence.id).in('status', ['pago', 'recebido'])
+    if (unlinkError) return { error: mapError(unlinkError.message) }
+    const { error } = await supabase.from('financial_recurrences_fh').delete().eq('id', recurrence.id)
+    if (error) return { error: mapError(error.message) }
+    await audit(supabase, householdId, user.id, 'financial_recurrences_fh', recurrence.id, 'delete', recurrence, null)
+    reload()
+    return { error: null }
+  }
+
+  async function generateOneRecurrence(recurrence: FRecurrence, horizon: string) {
+    if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.' }
+    const { data: existing, error: readError } = await supabase.from('financial_transactions_fh')
+      .select('period_key').eq('recurrence_id', recurrence.id)
+    if (readError) return { error: mapError(readError.message) }
+    const keys = new Set(((existing ?? []) as { period_key: string | null }[]).map((row) => row.period_key ?? ''))
+    for (const period of duePeriods(recurrence, horizon, keys)) {
+      const { error } = await supabase.from('financial_transactions_fh').insert({
+        household_id: householdId, created_by: user.id, account_id: recurrence.account_id,
+        kind: recurrence.kind, amount: recurrence.amount, currency: recurrence.currency,
+        status: 'pendente', description: recurrence.description, category_id: recurrence.category_id,
+        date: period.date, owner_id: recurrence.owner_id, recurrence_id: recurrence.id, period_key: period.period_key,
+      })
+      if (error && !/duplicate key|unique constraint/i.test(error.message)) return { error: mapError(error.message) }
+    }
+    return { error: null }
+  }
+
+  function endOfYearAhead() {
+    const date = new Date()
+    date.setFullYear(date.getFullYear() + 1)
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  }
+
   /** Gera lançamentos PENDENTES até o horizonte. Idempotente por (recurrence_id, period_key). */
   async function generateRecurrences(horizon: string) {
     if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.', created: 0 }
@@ -428,6 +545,9 @@ export function useFinanceData() {
     insert,
     update,
     remove,
+    saveRecurrence,
+    setRecurrenceActive,
+    deleteRecurrence,
     generateRecurrences,
     recordOperation,
   }

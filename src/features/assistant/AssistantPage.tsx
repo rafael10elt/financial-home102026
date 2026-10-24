@@ -57,6 +57,8 @@ export function AssistantPage() {
   const [webhookUrl, setWebhookUrl] = useState('')
   const [webhookMsg, setWebhookMsg] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [selectedConversations, setSelectedConversations] = useState<string[]>([])
+  const [confirmConversationDelete, setConfirmConversationDelete] = useState<'selected' | 'all' | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const voice = useVoice((text) => setInput((current) => (current ? `${current} ${text}` : text)))
@@ -88,6 +90,19 @@ export function AssistantPage() {
     } else if (result.confirmations.length > 0) {
       notify('info', 'Ação aguardando sua confirmação', 'Revise a prévia antes de autorizar a alteração.')
     }
+  }
+
+  async function handleDeleteConversations() {
+    if (!confirmConversationDelete) return
+    const ids = confirmConversationDelete === 'all' ? null : selectedConversations
+    const result = await assistant.deleteConversations(ids)
+    setConfirmConversationDelete(null)
+    if (result.error) {
+      notify('error', t('ai.deleteConversations'), result.error)
+      return
+    }
+    setSelectedConversations([])
+    notify('success', t('ai.deleteConversations'), t('ai.conversationsDeleted', { count: result.deleted }))
   }
 
   const keyMissing = assistant.keyStatus.checked && !assistant.keyStatus.configured
@@ -135,24 +150,51 @@ export function AssistantPage() {
 
       {tab === 'chat' && (
         <div className="flex flex-col gap-3">
-          {assistant.conversations.length > 1 && (
-            <div className="flex flex-wrap gap-1.5">
-              {assistant.conversations.slice(0, 10).map((conversation) => (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => assistant.setActiveId(conversation.id)}
-                  aria-pressed={assistant.activeId === conversation.id}
-                  className={
-                    assistant.activeId === conversation.id
-                      ? 'rounded-md border border-primary bg-accent px-2.5 py-1 text-xs font-medium'
-                      : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground'
-                  }
-                >
-                  {(conversation.title || 'Conversa').slice(0, 24)}
-                </button>
-              ))}
-            </div>
+          {assistant.conversations.length > 0 && (
+            <Card>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">{t('ai.conversations')}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setSelectedConversations(
+                    selectedConversations.length === assistant.conversations.length
+                      ? []
+                      : assistant.conversations.map((conversation) => conversation.id),
+                  )}>
+                    {selectedConversations.length === assistant.conversations.length ? t('ai.deselectAll') : t('ai.selectAll')}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmConversationDelete('all')}>
+                    {t('ai.deleteAll')}
+                  </Button>
+                  {selectedConversations.length > 0 && (
+                    <Button size="sm" variant="destructive" onClick={() => setConfirmConversationDelete('selected')}>
+                      {t('ai.deleteSelected', { count: selectedConversations.length })}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <ul className="flex flex-col divide-y divide-[var(--border)]">
+                {assistant.conversations.map((conversation) => (
+                  <li key={conversation.id} className="flex items-center gap-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedConversations.includes(conversation.id)}
+                      onChange={(event) => setSelectedConversations((current) => event.target.checked
+                        ? [...new Set([...current, conversation.id])]
+                        : current.filter((id) => id !== conversation.id))}
+                      aria-label={t('ai.selectConversation', { title: conversation.title || t('ai.tabs.chat') })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => assistant.setActiveId(conversation.id)}
+                      aria-pressed={assistant.activeId === conversation.id}
+                      className={`min-w-0 flex-1 truncate text-left text-sm ${assistant.activeId === conversation.id ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}
+                    >
+                      {(conversation.title || t('ai.tabs.chat')).slice(0, 48)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
           )}
 
           <Card>
@@ -276,6 +318,19 @@ export function AssistantPage() {
                   setPendingConfirmation(null)
                   notify('error', 'A ação não foi concluída', error instanceof Error ? error.message : String(error))
                 })}>{t('ai.confirmYes')}</Button>
+              </div>
+            </Modal>
+          )}
+          {confirmConversationDelete && (
+            <Modal title={t('ai.deleteConversations')} onClose={() => setConfirmConversationDelete(null)}>
+              <p className="text-sm text-muted-foreground">
+                {confirmConversationDelete === 'all'
+                  ? t('ai.deleteAllConfirm')
+                  : t('ai.deleteSelectedConfirm', { count: selectedConversations.length })}
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setConfirmConversationDelete(null)}>{t('common.cancel')}</Button>
+                <Button variant="destructive" onClick={() => void handleDeleteConversations()}>{t('ai.deleteConversations')}</Button>
               </div>
             </Modal>
           )}

@@ -1450,3 +1450,31 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
   pendente até a publicação/validação manual do ambiente.
 - Próximo passo da Fase 7: publicar a Edge Function, validar os fluxos com os
   dois perfis em produção, confirmar backup recuperável e revisar PWA/offline.
+# 2026-10-24 — Filtros por intervalo e sincronização automática de recorrências
+
+- Resumo financeiro: substituído o seletor “Este mês / Tudo” por datas inicial e final, com início padrão no primeiro dia do mês atual e término em hoje. O consolidado respeita as duas datas escolhidas.
+- Recorrências: criação e edição agora sincronizam automaticamente os lançamentos pendentes até 12 meses à frente. O botão manual continua disponível para repetir a sincronização sem duplicar períodos.
+- Edição: o botão “Editar recorrência” abre o mesmo formulário preenchido com os dados atuais. Mudanças ajustam somente pendências futuras. Pausar remove pendências futuras; excluir remove todos os lançamentos ainda pendentes/previstos da regra. Itens pagos/recebidos permanecem no histórico e são desvinculados ao excluir a regra.
+- Confirmações e erros dessas ações usam modal/toast conforme o padrão solicitado.
+- Banco: sem alteração de schema ou política RLS; não é necessário executar SQL no Supabase.
+- Limite atual: as operações de sincronização usam chamadas Supabase sequenciais, portanto uma falha de rede no meio pode deixar parte da sincronização pendente. A unicidade de `(recurrence_id, period_key)` mantém seguro repetir pelo botão “Gerar pendentes”.
+# 2026-10-24 — Limpar período e apagar conversas do Assistente
+
+- Finanças: intervalo abre no mês-calendário atual (primeiro ao último dia); botão “Limpar” restaura essas datas após alterações.
+- Assistente: adicionada seleção individual/múltipla e seleção total das conversas recentes do perfil atual, além de “Apagar todas”. A exclusão pede confirmação em modal, remove mensagens em cascata pela relação existente e mostra toast com o resultado. A ação “todas” é limitada ao perfil conectado e segue RLS.
+- Banco: nenhuma alteração necessária; não executar SQL no Supabase.
+- Verificação: `npm run build` concluído com sucesso; permanece o aviso conhecido de arquivos acima de 500 kB.
+# 2026-10-24 — Identidade visual atualizada
+
+- As três artes atuais em `public/icons` foram conectadas: `icon-192.png` na tela de perfil e no cabeçalho do sistema, além de favicon e ícone Apple; os ícones 192, 512 e maskable 512 ficam declarados no manifesto PWA.
+- Service worker atualizado para pré-cache desses assets e novo nome de cache (`fh-shell-v2`) para atualizar instalações existentes.
+- Banco: sem mudanças; não executar SQL no Supabase.
+# 2026-10-24 — Refinamento visual da tela de seleção de perfil
+
+- Reorganizada a entrada em layout centralizado: logotipo isolado no topo, título e instrução centralizados e texto de apoio alinhado ao centro.
+- Removidos os cartões quadrados visíveis ao redor das fotos dos perfis. Avatares circulares maiores e nomes centralizados, com área de toque responsiva, estados de hover e foco acessíveis.
+- No mobile, o seletor mantém duas colunas compactas, com espaços e tamanhos reduzidos para evitar quebra ou rolagem desnecessária.
+# 2026-10-24 — Tema escuro como padrão
+
+- Preferência inicial do tema alterada de “Sistema” para “Escuro” no armazenamento e no script anti-flash do HTML, para evitar que a primeira renderização apareça clara.
+- Preferências explícitas previamente salvas continuam preservadas.
