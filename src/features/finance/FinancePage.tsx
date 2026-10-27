@@ -58,6 +58,11 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+function formatDate(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : iso
+}
+
 function localDateKey(date = new Date()): string {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -80,7 +85,7 @@ function currentMonthRange(): { start: string; end: string } {
 }
 
 export function FinancePage() {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const { notify } = useToast()
   const { user } = useAuth()
   const { state: householdState } = useHousehold()
@@ -109,6 +114,8 @@ export function FinancePage() {
   const [filterAccount, setFilterAccount] = useState('')
   const [filterKind, setFilterKind] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  const [transactionsFrom, setTransactionsFrom] = useState(() => currentMonthRange().start)
+  const [transactionsTo, setTransactionsTo] = useState(() => currentMonthRange().end)
   const [widgetLayout, setWidgetLayout] = useState<FinanceWidgetLayout>(() => loadDashboardLayout(user?.id))
   const [customizeWidgets, setCustomizeWidgets] = useState(false)
   const widgetProfileRef = useRef(user?.id)
@@ -217,13 +224,50 @@ export function FinancePage() {
   const filteredTxs = useMemo(
     () =>
       finance.transactions.filter((tx) => {
+        if (transactionsFrom && tx.date < transactionsFrom) return false
+        if (transactionsTo && tx.date > transactionsTo) return false
         if (filterAccount && tx.account_id !== filterAccount) return false
         if (filterKind && tx.kind !== filterKind) return false
         if (filterStatus && tx.status !== filterStatus) return false
         return true
       }),
-    [finance.transactions, filterAccount, filterKind, filterStatus],
+    [finance.transactions, filterAccount, filterKind, filterStatus, transactionsFrom, transactionsTo],
   )
+
+  const transactionMonths = useMemo(() => {
+    const groups = new Map<string, Transaction[]>()
+    const ordered = [...filteredTxs].sort((a, b) => {
+      const aPending = a.status === 'pendente' || a.status === 'previsto'
+      const bPending = b.status === 'pendente' || b.status === 'previsto'
+      if (aPending !== bPending) return aPending ? -1 : 1
+      if (aPending) return a.date.localeCompare(b.date) || a.description.localeCompare(b.description)
+      return b.date.localeCompare(a.date) || a.description.localeCompare(b.description)
+    })
+    for (const tx of ordered) {
+      const month = tx.date.slice(0, 7)
+      const group = groups.get(month) ?? []
+      group.push(tx)
+      groups.set(month, group)
+    }
+    return [...groups.entries()].sort(([a], [b]) => b.localeCompare(a)).map(([month, transactions]) => {
+      const byKind = {
+        expense: { count: 0, pendingCount: 0, paidCount: 0, pendingTotals: new Map<string, number>(), paidTotals: new Map<string, number>() },
+        income: { count: 0, pendingCount: 0, paidCount: 0, pendingTotals: new Map<string, number>(), paidTotals: new Map<string, number>() },
+      }
+      for (const tx of transactions) {
+        const summary = byKind[tx.kind]
+        summary.count += 1
+        const isPending = tx.status === 'pendente' || tx.status === 'previsto' || tx.status === 'vencido'
+        const isPaid = tx.status === 'pago' || tx.status === 'recebido'
+        if (!isPending && !isPaid) continue
+        const totals = isPending ? summary.pendingTotals : summary.paidTotals
+        totals.set(tx.currency, (totals.get(tx.currency) ?? 0) + toMinorUnits(tx.amount, tx.currency))
+        if (isPending) summary.pendingCount += 1
+        else summary.paidCount += 1
+      }
+      return { month, transactions, byKind }
+    })
+  }, [filteredTxs])
 
   async function handleSave(table: string, values: Record<string, unknown>, editingId: string | null, auditEntity?: string, before?: unknown) {
     setBusy(true)
@@ -560,26 +604,61 @@ export function FinancePage() {
               ))}
             </select>
             <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className={filterClass} aria-label={t('fin.kind')}>
-              <option value="">—</option>
+              <option value="">{t('fin.allTypes')}</option>
               <option value="income">{t('fin.income')}</option>
               <option value="expense">{t('fin.expense')}</option>
             </select>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterClass} aria-label={t('fin.status')}>
-              <option value="">—</option>
+              <option value="">{t('fin.allStatuses')}</option>
               {(['previsto', 'pendente', 'pago', 'recebido', 'vencido', 'cancelado'] as const).map((s) => (
                 <option key={s} value={s}>
                   {t(`fin.status.${s}`)}
                 </option>
               ))}
             </select>
+            <label className="flex items-center gap-2 rounded-md border border-[var(--border)] px-3 text-sm text-muted-foreground">
+              {t('fin.from')} <input type="date" value={transactionsFrom} onChange={(e) => setTransactionsFrom(e.target.value)} aria-label={t('fin.dateFrom')} className="bg-transparent py-2 text-foreground" />
+            </label>
+            <label className="flex items-center gap-2 rounded-md border border-[var(--border)] px-3 text-sm text-muted-foreground">
+              {t('fin.to')} <input type="date" value={transactionsTo} onChange={(e) => setTransactionsTo(e.target.value)} aria-label={t('fin.dateTo')} className="bg-transparent py-2 text-foreground" />
+            </label>
+            <Button size="sm" variant="ghost" onClick={() => { const range = currentMonthRange(); setTransactionsFrom(range.start); setTransactionsTo(range.end) }}>{t('fin.clearDates')}</Button>
           </div>
 
           <Card>
-            {filteredTxs.length === 0 ? (
+            {transactionMonths.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t('fin.empty')}</p>
             ) : (
-              <ul className="flex flex-col divide-y divide-[var(--border)]">
-                {filteredTxs.slice(0, 200).map((tx) => {
+              <div className="flex flex-col gap-5">
+                {transactionMonths.map(({ month, transactions, byKind }) => (
+                  <details key={month} className="rounded-md border border-[var(--border)] px-3">
+                    <summary className="cursor-pointer py-3 text-sm font-semibold capitalize marker:text-muted-foreground">
+                      <span className="ml-1">{new Intl.DateTimeFormat(locale === 'pt-BR' ? 'pt-BR' : 'en-GB', { month: 'long', year: 'numeric' }).format(new Date(`${month}-01T12:00:00`))}</span>
+                      <span className="ml-3 inline-flex flex-wrap gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
+                        <span>{t('fin.totalTransactions', { count: transactions.length })}</span>
+                        <span>{t('fin.expense')}: {byKind.expense.count}</span>
+                        <span>{t('fin.income')}: {byKind.income.count}</span>
+                      </span>
+                    </summary>
+                    <div className="grid gap-3 border-b border-[var(--border)] pb-3 pl-5 sm:grid-cols-2">
+                      {(['expense', 'income'] as const).map((kind) => {
+                        const summary = byKind[kind]
+                        const totalsLabel = (totals: Map<string, number>) => totals.size > 0
+                          ? [...totals].map(([currency, total]) => formatMoney(total, currency)).join(' · ')
+                          : '—'
+                        return (
+                          <div key={kind} className={`rounded-md border p-3 ${kind === 'income' ? 'border-green-700/30 bg-green-700/5' : 'border-rose-700/30 bg-rose-700/5'}`}>
+                            <h4 className={`mb-2 text-sm font-semibold ${kind === 'income' ? 'text-green-700 dark:text-green-400' : 'text-rose-700 dark:text-rose-400'}`}>{t(`fin.${kind === 'income' ? 'income' : 'expense'}`)} · {t('fin.totalTransactions', { count: summary.count })}</h4>
+                            <div className="grid gap-1 text-xs text-muted-foreground">
+                              <span>{t('fin.pendingTransactions', { count: summary.pendingCount })} · {t('fin.pendingTotal')}: {totalsLabel(summary.pendingTotals)}</span>
+                              <span>{t('fin.paidTransactions', { count: summary.paidCount })} · {t('fin.paidTotal')}: {totalsLabel(summary.paidTotals)}</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <ul className="flex flex-col divide-y divide-[var(--border)]">
+                {transactions.map((tx) => {
                   const overdue = (tx.status === 'previsto' || tx.status === 'pendente') && tx.date < todayKey()
                   const shownStatus = overdue ? 'vencido' : tx.status
                   return (
@@ -587,7 +666,7 @@ export function FinancePage() {
                       <div className="min-w-0 flex flex-col">
                         <span className="font-medium">{tx.description}</span>
                         <span className="break-words text-xs text-muted-foreground">
-                          {tx.date} · {t(`fin.status.${shownStatus}`)} · {accountName(tx.account_id)} ·{' '}
+                          {formatDate(tx.date)} · {t(`fin.status.${shownStatus}`)} · {accountName(tx.account_id)} ·{' '}
                           {categoryName(tx.category_id)} · {memberName(tx.owner_id)}
                           {tx.merchant_id ? ` · ${finance.merchants.find((merchant) => merchant.id === tx.merchant_id)?.name ?? ''}` : ''}
                           {tx.installment_total ? ` · ${tx.installment_number}/${tx.installment_total}` : ''}
@@ -628,7 +707,10 @@ export function FinancePage() {
                     </li>
                   )
                 })}
-              </ul>
+                    </ul>
+                  </details>
+                ))}
+              </div>
             )}
           </Card>
         </div>
@@ -709,7 +791,7 @@ export function FinancePage() {
                         {accountName(transfer.from_account)} → {accountName(transfer.to_account)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {transfer.date}
+                        {formatDate(transfer.date)}
                         {transfer.description ? ` · ${transfer.description}` : ''}
                       </span>
                     </div>
@@ -826,7 +908,7 @@ export function FinancePage() {
                         {formatMoney(toMinorUnits(operation.to_amount, operation.to_currency), operation.to_currency)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {operation.date}
+                        {formatDate(operation.date)}
                         {operation.source ? ` · ${operation.source}` : ''}
                       </span>
                     </div>

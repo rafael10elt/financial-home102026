@@ -20,6 +20,11 @@ import { AnnouncementDialog, GossipDialog, MoodDialog, PostDialog, TipDialog } f
 
 type Tab = 'feed' | 'memories' | 'photos' | 'mood' | 'tips' | 'announcements' | 'gossip'
 
+function formatCalendarDate(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : iso
+}
+
 export function MediaImage({
   path,
   alt,
@@ -319,7 +324,7 @@ export function DiaryPage() {
                     <div className="flex flex-col gap-1">
                       {post.title && <CardTitle>{post.title}</CardTitle>}
                       <CardDescription>
-                        {post.memory_date} · {authorName(post.author_id)}
+                        {formatCalendarDate(post.memory_date)} · {authorName(post.author_id)}
                         {post.visibility === 'personal' ? ` · ${t('agenda.visibility.personal')}` : ''}
                       </CardDescription>
                     </div>
@@ -481,7 +486,7 @@ export function DiaryPage() {
                 <li key={entry.id} className="flex items-center gap-2 py-1.5 text-sm">
                   <span aria-hidden="true">{entry.mood?.emoji ?? '🙂'}</span>
                   <span>
-                    {entry.mood?.name ?? '—'} · {entry.date}
+                    {entry.mood?.name ?? '—'} · {formatCalendarDate(entry.date)}
                   </span>
                   <span className="text-xs text-muted-foreground">{authorName(entry.user_id)}</span>
                 </li>
