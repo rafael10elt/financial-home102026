@@ -257,7 +257,8 @@ export function FinancePage() {
       for (const tx of transactions) {
         const summary = byKind[tx.kind]
         summary.count += 1
-        const isPending = tx.status === 'pendente' || tx.status === 'previsto' || tx.status === 'vencido'
+        // "vencido" is a display-only status derived from date + persisted status below.
+        const isPending = tx.status === 'pendente' || tx.status === 'previsto'
         const isPaid = tx.status === 'pago' || tx.status === 'recebido'
         if (!isPending && !isPaid) continue
         const totals = isPending ? summary.pendingTotals : summary.paidTotals
