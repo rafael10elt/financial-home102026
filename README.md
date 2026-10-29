@@ -72,6 +72,11 @@ projeto em que o SQL foi executado. Para instalação/recriação, use `banco.sq
 os arquivos antigos em `supabase/migrations/` ainda descrevem o fluxo anterior
 com Supabase Auth e não devem ser aplicados neste setup simplificado.
 
+Para atualizar um banco já existente e permitir que todos os membros da casa
+editem os mesmos registros financeiros, execute somente o bloco `FH-SQL-014`
+no final de `banco.sql` pelo SQL Editor do projeto Supabase ativo. Esse bloco
+altera apenas as policies RLS financeiras e não modifica os dados existentes.
+
 **Atenção:** esse método é identificação simples, não autenticação segura. O
 navegador envia o UUID do perfil em `x-profile-id`, e o banco usa esse valor nas
 políticas RLS; qualquer pessoa pode alterá-lo e assumir outro perfil. Use apenas

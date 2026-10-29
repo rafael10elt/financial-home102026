@@ -2895,3 +2895,137 @@ select conname, pg_get_constraintdef(oid) as definition
    and conname = 'tasks_fh_status_check';
 select routine_name from information_schema.routines
  where routine_schema = 'public' and routine_name = 'set_task_status_fh';
+
+-- =====================================================================
+-- FH-SQL-014: acesso financeiro igual para todos os membros da casa
+-- Data: 2026-10-29
+-- Qualquer membro pode ler e alterar qualquer registro financeiro da casa.
+-- Nao modifica dados. Aplicar uma vez no SQL Editor do projeto Supabase.
+-- =====================================================================
+begin;
+
+drop policy if exists financial_accounts_fh_select on public.financial_accounts_fh;
+create policy financial_accounts_fh_select on public.financial_accounts_fh
+  for select to anon, authenticated using (public.is_household_member_fh(household_id));
+drop policy if exists financial_accounts_fh_insert on public.financial_accounts_fh;
+create policy financial_accounts_fh_insert on public.financial_accounts_fh
+  for insert to anon, authenticated with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_accounts_fh_update on public.financial_accounts_fh;
+create policy financial_accounts_fh_update on public.financial_accounts_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_accounts_fh_delete on public.financial_accounts_fh;
+create policy financial_accounts_fh_delete on public.financial_accounts_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+
+drop policy if exists financial_transactions_fh_select on public.financial_transactions_fh;
+create policy financial_transactions_fh_select on public.financial_transactions_fh
+  for select to anon, authenticated using (public.is_household_member_fh(household_id));
+drop policy if exists financial_transactions_fh_update on public.financial_transactions_fh;
+create policy financial_transactions_fh_update on public.financial_transactions_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_transactions_fh_delete on public.financial_transactions_fh;
+create policy financial_transactions_fh_delete on public.financial_transactions_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+
+drop policy if exists financial_recurrences_fh_update on public.financial_recurrences_fh;
+create policy financial_recurrences_fh_update on public.financial_recurrences_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_recurrences_fh_delete on public.financial_recurrences_fh;
+create policy financial_recurrences_fh_delete on public.financial_recurrences_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+
+drop policy if exists financial_transfers_fh_update on public.financial_transfers_fh;
+create policy financial_transfers_fh_update on public.financial_transfers_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_transfers_fh_delete on public.financial_transfers_fh;
+create policy financial_transfers_fh_delete on public.financial_transfers_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+drop policy if exists exchange_operations_fh_update on public.exchange_operations_fh;
+create policy exchange_operations_fh_update on public.exchange_operations_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists exchange_operations_fh_delete on public.exchange_operations_fh;
+create policy exchange_operations_fh_delete on public.exchange_operations_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+
+drop policy if exists financial_goals_fh_select on public.financial_goals_fh;
+create policy financial_goals_fh_select on public.financial_goals_fh
+  for select to anon, authenticated using (public.is_household_member_fh(household_id));
+drop policy if exists financial_goals_fh_insert on public.financial_goals_fh;
+create policy financial_goals_fh_insert on public.financial_goals_fh
+  for insert to anon, authenticated with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_goals_fh_update on public.financial_goals_fh;
+create policy financial_goals_fh_update on public.financial_goals_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_goals_fh_delete on public.financial_goals_fh;
+create policy financial_goals_fh_delete on public.financial_goals_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+
+drop policy if exists goal_contributions_fh_update on public.goal_contributions_fh;
+create policy goal_contributions_fh_update on public.goal_contributions_fh
+  for update to anon, authenticated
+  using (exists (select 1 from public.financial_goals_fh g where g.id = goal_id
+    and public.is_household_member_fh(g.household_id)))
+  with check (exists (select 1 from public.financial_goals_fh g
+    where g.id = goal_contributions_fh.goal_id and public.is_household_member_fh(g.household_id)));
+drop policy if exists goal_contributions_fh_delete on public.goal_contributions_fh;
+create policy goal_contributions_fh_delete on public.goal_contributions_fh
+  for delete to anon, authenticated using (exists (
+    select 1 from public.financial_goals_fh g where g.id = goal_id
+      and public.is_household_member_fh(g.household_id)));
+
+drop policy if exists financial_imports_fh_update on public.financial_imports_fh;
+create policy financial_imports_fh_update on public.financial_imports_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id));
+drop policy if exists financial_imports_fh_delete on public.financial_imports_fh;
+create policy financial_imports_fh_delete on public.financial_imports_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+drop policy if exists financial_import_rows_fh_update on public.financial_import_rows_fh;
+create policy financial_import_rows_fh_update on public.financial_import_rows_fh
+  for update to anon, authenticated using (exists (
+    select 1 from public.financial_imports_fh i where i.id = import_id
+      and public.is_household_member_fh(i.household_id)))
+  with check (exists (select 1 from public.financial_imports_fh i
+    where i.id = financial_import_rows_fh.import_id
+      and public.is_household_member_fh(i.household_id)));
+drop policy if exists financial_import_rows_fh_delete on public.financial_import_rows_fh;
+create policy financial_import_rows_fh_delete on public.financial_import_rows_fh
+  for delete to anon, authenticated using (exists (
+    select 1 from public.financial_imports_fh i where i.id = import_id
+      and public.is_household_member_fh(i.household_id)));
+
+drop policy if exists financial_merchants_fh_update on public.financial_merchants_fh;
+create policy financial_merchants_fh_update on public.financial_merchants_fh
+  for update to anon, authenticated using (public.is_household_member_fh(household_id))
+  with check (public.is_household_member_fh(household_id) and exists (
+    select 1 from public.categories_fh c where c.id = financial_merchants_fh.category_id
+      and c.household_id = financial_merchants_fh.household_id and c.domain = 'finance'));
+drop policy if exists financial_merchants_fh_delete on public.financial_merchants_fh;
+create policy financial_merchants_fh_delete on public.financial_merchants_fh
+  for delete to anon, authenticated using (public.is_household_member_fh(household_id));
+
+-- Categorias globais ficam imutaveis; categorias da casa sao compartilhadas.
+drop policy if exists categories_fh_update on public.categories_fh;
+create policy categories_fh_update on public.categories_fh
+  for update to anon, authenticated using (domain = 'finance' and household_id is not null
+    and public.is_household_member_fh(household_id))
+  with check (domain = 'finance' and household_id is not null
+    and public.is_household_member_fh(household_id));
+drop policy if exists categories_fh_delete on public.categories_fh;
+create policy categories_fh_delete on public.categories_fh
+  for delete to anon, authenticated using (domain = 'finance' and household_id is not null
+    and public.is_household_member_fh(household_id));
+
+commit;
+
+-- Validacao: membro da casa deve consultar e alterar lancamentos dessa casa.
+select tablename, policyname, cmd, qual, with_check from pg_policies
+ where schemaname = 'public' and tablename in (
+   'financial_transactions_fh', 'financial_accounts_fh', 'financial_recurrences_fh',
+   'financial_goals_fh') order by tablename, cmd;

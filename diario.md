@@ -1518,6 +1518,12 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - **PWA/offline:** validar instalação, cache privado/logout, conectividade e fila de sincronização em dispositivos reais; o quadro não enfileira mudanças offline e requer conexão para salvar etapas.
 - **Entrega final:** publicar no Netlify, revisar mobile/acessibilidade, fazer backup recuperável e completar testes de RLS por chamadas diretas à API. O build local, sozinho, não confirma esses itens.
 
+# 2026-10-29 — Acesso financeiro igual para membros da casa
+
+- Relato: Jéssica via a lista de lançamentos, mas a edição retornava “Nenhum registro foi atualizado”. As políticas financeiras anteriores limitavam alterações ao criador, responsável ou dono formal da casa. A captura não permite consultar as policies remotas; também pode haver diferença entre o SQL local e o projeto Supabase ativo.
+- `banco.sql` recebeu FH-SQL-014: todos os membros da mesma casa podem ler e alterar os registros financeiros, inclusive contas, lançamentos, recorrências, transferências, câmbio, metas, importações, estabelecimentos e categorias financeiras da casa. Categorias globais continuam imutáveis. Nenhum dado é reescrito.
+- Para ativar em banco existente, executar uma vez o bloco FH-SQL-014 no SQL Editor do projeto Supabase usado pelo site. O SQL remoto não foi executado nesta sessão; até isso ocorrer, o comportamento publicado pode continuar igual.
+
 # 2026-10-24 — Preparação da entrega Push
 
 - O hook de push agora recupera a inscrição existente no carregamento, mantém estados corretos de suporte/configuração/permissão e sincroniza inscrição por perfil. Falhas e confirmações de ativar/desativar são comunicadas por toast.
