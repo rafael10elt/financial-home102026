@@ -3,7 +3,7 @@ import { useI18n } from '../../i18n'
 import { Button } from '../../ui/Button'
 import { Field, Input } from '../../ui/Input'
 import { Modal } from '../../ui/Modal'
-import { inputClass, parseAmountInput, type Category, type Member } from './financeForm'
+import { inputClass, defaultTransactionStatus, parseAmountInput, type Category, type Member } from './financeForm'
 import type { Account, FinanceMerchant, Goal, Transaction } from '../../finance/useFinance'
 
 export type { Category, Member }
@@ -122,7 +122,7 @@ export function AccountDialog({
   const [name, setName] = useState(initial?.name ?? '')
   const [type, setType] = useState<'checking' | 'savings' | 'cash' | 'other'>(initial?.type ?? 'checking')
   const [currency, setCurrency] = useState(initial?.currency ?? 'EUR')
-  const [opening, setOpening] = useState(initial?.opening_balance ?? '0.00')
+  const [opening, setOpening] = useState(initial?.opening_balance ?? '')
   const [visibility, setVisibility] = useState<'shared' | 'personal'>(initial?.visibility ?? 'shared')
   const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '')
   const [formError, setFormError] = useState<string | null>(null)
@@ -160,7 +160,7 @@ export function AccountDialog({
         {(aria) => <Input {...aria} value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />}
       </Field>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Field label={t('fin.accountType')}>
+        <Field label={t('fin.accountType')} hint={type === 'cash' ? t('fin.cashAccountHint') : undefined}>
           {(aria) => (
             <select {...aria} value={type} onChange={(e) => setType(e.target.value as 'checking' | 'savings' | 'cash' | 'other')} className={inputClass}>
               {(['checking', 'savings', 'cash', 'other'] as const).map((value) => (
@@ -179,9 +179,9 @@ export function AccountDialog({
             </select>
           )}
         </Field>
-        <Field label={t('fin.openingBalance')}>
+        <Field label={t('fin.openingBalance')} hint={t('fin.openingBalanceHint')}>
           {(aria) => (
-            <Input {...aria} value={opening} inputMode="decimal" onChange={(e) => setOpening(e.target.value)} />
+            <Input {...aria} value={opening} inputMode="decimal" placeholder="0,00" onChange={(e) => setOpening(e.target.value)} />
           )}
         </Field>
       </div>
@@ -234,7 +234,9 @@ export function TransactionDialog({
   const [kind, setKind] = useState<'income' | 'expense'>(initial?.kind ?? defaultKind)
   const [amount, setAmount] = useState(initial?.amount ?? '')
   const [currency, setCurrency] = useState(initial?.currency ?? accounts[0]?.currency ?? 'EUR')
-  const [status, setStatus] = useState<(typeof TX_STATUSES)[number]>(initial?.status ?? 'pendente')
+  const [status, setStatus] = useState<(typeof TX_STATUSES)[number]>(
+    initial?.status ?? defaultTransactionStatus(defaultKind),
+  )
   const [description, setDescription] = useState(initial?.description ?? '')
   const defaultExpenseCategory = categories.find(
     (category) => category.kind === 'expense' && category.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR') === 'alimentacao',
@@ -247,10 +249,18 @@ export function TransactionDialog({
   const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '')
   const [formError, setFormError] = useState<string | null>(null)
 
+  function changeKind(next: 'income' | 'expense') {
+    setKind(next)
+    // Mantém o par pago/recebido coerente ao trocar o tipo do lançamento.
+    setStatus((current) =>
+      current === 'pago' || current === 'recebido' ? defaultTransactionStatus(next) : current,
+    )
+  }
+
   function submit(event: FormEvent) {
     event.preventDefault()
     const parsed = parseAmountInput(amount)
-    if (!description.trim() || !parsed || !date || !accountId) {
+    if (!parsed || !date || !accountId) {
       setFormError(t('common.required'))
       return
     }
@@ -281,7 +291,7 @@ export function TransactionDialog({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label={t('fin.kind')}>
           {(aria) => (
-            <select {...aria} value={kind} onChange={(e) => setKind(e.target.value as 'income' | 'expense')} className={inputClass}>
+            <select {...aria} value={kind} onChange={(e) => changeKind(e.target.value as 'income' | 'expense')} className={inputClass}>
               <option value="expense">{t('fin.expense')}</option>
               <option value="income">{t('fin.income')}</option>
             </select>
@@ -301,7 +311,7 @@ export function TransactionDialog({
           )}
         </Field>
       </div>
-      <Field label={t('fin.description')}>
+      <Field label={t('fin.description')} hint={t('fin.descriptionOptional')}>
         {(aria) => (
           <Input {...aria} value={description} maxLength={200} onChange={(e) => setDescription(e.target.value)} />
         )}

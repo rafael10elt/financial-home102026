@@ -1552,3 +1552,12 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - Contexto do medidor: o CESCO Emlite ECA2.v é um submedidor interno; a leitura usada é o total acumulado em kWh exibido nele, e a estimativa cobre apenas os circuitos alimentados por esse medidor. Nenhuma integração automática com o aparelho é necessária.
 - Banco: FH-SQL-016 adiciona `cycle_months` (inteiro, padrão 2, entre 1 e 12) em `energy_settings_fh`. Em banco existente, executar uma vez o bloco FH-SQL-016 ao final de `banco.sql`. Migração equivalente em `supabase/migrations/20261121130000_fh_energy_cycle.sql`. Até o SQL ser aplicado, salvar a medição retorna erro na coluna nova.
 - Verificação: `npm run typecheck` passou; testes de `src/energy` e `src/i18n` passaram (13 testes); lint dos arquivos alterados sem erros.
+
+# 2026-11-21 — Lançamentos pagos por padrão, descrição opcional e fluxo Cash
+
+- Ao criar um lançamento, despesas já vêm com status “Pago” e receitas com “Recebido”. Ao trocar o tipo no formulário, o par pago/recebido acompanha; previsto, pendente e cancelado continuam disponíveis para planejamento.
+- A descrição passou a ser opcional. O campo ganhou uma dica e, quando fica vazio, a lista mostra “Sem descrição” em vez de um espaço em branco.
+- Transferências: a aba Lançamentos ganhou o botão “Transferir”, que abre o mesmo fluxo da aba Transferências. Essas movimentações continuam fora do consolidado (não entram como receita/despesa). Transferências também podem ser excluídas com confirmação.
+- Conta “Cash”: o saldo inicial agora é opcional (vazio equivale a 0) e o formulário explica que contas do tipo Dinheiro servem para marcar lançamentos pagos ou recebidos em espécie. Para abastecer o caixa, use uma transferência da conta bancária para a conta Cash.
+- Banco: FH-SQL-017 permite descrição vazia em `financial_transactions_fh` (default `''` e check de 0 a 200 caracteres). Em banco existente, executar uma vez o bloco FH-SQL-017 ao final de `banco.sql`. Migração equivalente em `supabase/migrations/20261121140000_fh_finance_optional_description.sql`.
+- Verificação: `npm run typecheck` e `npm run build` passaram; testes de finanças e i18n passaram (40 testes); lint dos arquivos alterados sem erros (permanece apenas um aviso pré-existente de dependência em `FinancePage`).

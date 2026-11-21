@@ -1213,7 +1213,7 @@ create table if not exists public.financial_transactions_fh (
   currency            char(3) not null default 'EUR',
   status              text not null default 'pendente'
                       check (status in ('previsto', 'pendente', 'pago', 'recebido', 'cancelado')),
-  description         text not null check (char_length(btrim(description)) between 1 and 200),
+  description         text not null default '' check (char_length(btrim(description)) between 0 and 200),
   category_id         uuid references public.categories_fh (id) on delete set null,
   merchant_id         uuid references public.financial_merchants_fh (id) on delete set null,
   date                date not null,
@@ -3113,4 +3113,30 @@ select column_name, data_type, column_default, is_nullable
   from information_schema.columns
  where table_schema = 'public' and table_name = 'energy_settings_fh'
    and column_name = 'cycle_months';
+
+-- =====================================================================
+-- FH-SQL-017: descricao opcional em lancamentos financeiros
+-- Data: 2026-11-21
+-- Permite salvar lancamentos sem descricao (texto vazio). Nao modifica
+-- dados existentes. Aplicar uma vez no SQL Editor do projeto Supabase.
+-- =====================================================================
+begin;
+
+alter table public.financial_transactions_fh
+  alter column description set default '';
+
+alter table public.financial_transactions_fh
+  drop constraint if exists financial_transactions_fh_description_check;
+
+alter table public.financial_transactions_fh
+  add constraint financial_transactions_fh_description_check
+  check (char_length(btrim(description)) between 0 and 200);
+
+commit;
+
+-- Validacao FH-SQL-017
+select column_name, is_nullable, column_default
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'financial_transactions_fh'
+   and column_name = 'description';
 

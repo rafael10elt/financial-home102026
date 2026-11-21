@@ -5,6 +5,15 @@ export type Member = { user_id: string; display_name: string | null }
 
 export type Category = { id: string; name: string; kind: string | null }
 
+/**
+ * Status inicial de um lançamento criado manualmente: despesas já nascem
+ * pagas e receitas já nascem recebidas. Lançamentos previstos continuam
+ * disponíveis no seletor para quem quer planejar.
+ */
+export function defaultTransactionStatus(kind: 'income' | 'expense'): 'pago' | 'recebido' {
+  return kind === 'income' ? 'recebido' : 'pago'
+}
+
 /** Normaliza entrada monetária ("1.234,56" ou "1234.56") para "1234.56". */
 export function parseAmountInput(raw: string | number): string | null {
   let text = String(raw).trim().replace(/\s/g, '')

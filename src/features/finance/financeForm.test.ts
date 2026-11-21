@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseAmountInput } from './financeForm'
+import { defaultTransactionStatus, parseAmountInput } from './financeForm'
 
 describe('parseAmountInput', () => {
   it('aceita formatos pt-BR e internacionais', () => {
@@ -16,5 +16,12 @@ describe('parseAmountInput', () => {
     expect(parseAmountInput('abc')).toBeNull()
     expect(parseAmountInput('')).toBeNull()
     expect(parseAmountInput('12.345')).toBeNull()
+  })
+})
+
+describe('defaultTransactionStatus', () => {
+  it('cria despesas como pagas e receitas como recebidas', () => {
+    expect(defaultTransactionStatus('expense')).toBe('pago')
+    expect(defaultTransactionStatus('income')).toBe('recebido')
   })
 })

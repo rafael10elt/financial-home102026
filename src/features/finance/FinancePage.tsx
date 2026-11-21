@@ -598,6 +598,15 @@ export function FinancePage() {
             <Button size="sm" onClick={() => setDialog({ name: 'transaction', editing: null, kind: 'expense' })}>
               {t('fin.newTransaction')}
             </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setDialog({ name: 'transfer' })}
+              disabled={finance.accounts.length < 2}
+              title={t('fin.transferNote')}
+            >
+              {t('fin.transfer')}
+            </Button>
             <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className={filterClass} aria-label={t('fin.account')}>
               <option value="">{t('fin.account')}: —</option>
               {finance.accounts.map((a) => (
@@ -667,7 +676,7 @@ export function FinancePage() {
                   return (
                     <li key={tx.id} className="flex min-w-0 flex-col gap-2 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0 flex flex-col">
-                        <span className="font-medium">{tx.description}</span>
+                        <span className="font-medium">{tx.description || t('fin.noDescription')}</span>
                         <span className="break-words text-xs text-muted-foreground">
                           {formatDate(tx.date)} · {t(`fin.status.${shownStatus}`)} · {accountName(tx.account_id)} ·{' '}
                           {categoryName(tx.category_id)} · {memberName(tx.owner_id)}
@@ -797,9 +806,18 @@ export function FinancePage() {
                         {transfer.description ? ` · ${transfer.description}` : ''}
                       </span>
                     </div>
-                    <span className="font-semibold tabular-nums">
-                      {formatMoney(toMinorUnits(transfer.amount, transfer.currency), transfer.currency)}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold tabular-nums">
+                        {formatMoney(toMinorUnits(transfer.amount, transfer.currency), transfer.currency)}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmDelete({ table: 'financial_transfers_fh', id: transfer.id, before: transfer })}
+                      >
+                        {t('agenda.delete')}
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>
