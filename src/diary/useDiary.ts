@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
 import { checkUpload, postMediaPath, slotMediaPath } from './feed'
@@ -112,18 +112,23 @@ export function useDiaryData() {
   const [gossip, setGossip] = useState<Gossip[]>([])
   const [categories, setCategories] = useState<DiaryCategory[]>([])
   const [reloadToken, setReloadToken] = useState(0)
+  const loadedKeyRef = useRef<string | null>(null)
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), [])
 
   useEffect(() => {
     let cancelled = false
+    const identity = supabase && user && householdId ? `${user.id}:${householdId}` : null
+    // Recargas de fundo mantêm a tela (rolagem, modais, fotos) no lugar.
+    const background = identity !== null && loadedKeyRef.current === identity
     queueMicrotask(() => {
       if (cancelled) return
       if (!supabase || !user || !householdId) {
+        loadedKeyRef.current = null
         setStatus('idle')
         return
       }
-      setStatus('loading')
+      if (!background) setStatus('loading')
       setError(null)
       void loadAll(supabase, user.id, householdId)
     })
@@ -181,8 +186,10 @@ export function useDiaryData() {
         const firstError =
           pst.error ?? slt.error ?? mds.error ?? umds.error ?? tps.error ?? ann.error ?? rea.error ?? gos.error ?? cat.error
         if (firstError) {
-          setError(firstError.message)
-          setStatus('error')
+          if (!background) {
+            setError(firstError.message)
+            setStatus('error')
+          }
           return
         }
 
@@ -221,9 +228,10 @@ export function useDiaryData() {
         )
         setGossip((gos.data ?? []) as Gossip[])
         setCategories((cat.data ?? []) as DiaryCategory[])
+        loadedKeyRef.current = identity
         setStatus('ready')
       } catch (unknownError) {
-        if (!cancelled) {
+        if (!cancelled && !background) {
           setError(unknownError instanceof Error ? unknownError.message : String(unknownError))
           setStatus('error')
         }
@@ -354,19 +362,22 @@ export function useDiaryData() {
 
   async function markAnnouncementRead(announcementId: string, read: boolean) {
     if (!supabase || !user) return
-    if (read) {
-      await supabase.from('announcement_reads_fh').upsert(
-        { announcement_id: announcementId, user_id: user.id },
-        { onConflict: 'announcement_id,user_id', ignoreDuplicates: true },
-      )
-    } else {
-      await supabase
-        .from('announcement_reads_fh')
-        .delete()
-        .eq('announcement_id', announcementId)
-        .eq('user_id', user.id)
-    }
-    reload()
+    const previous = announcements
+    setAnnouncements((rows) =>
+      rows.map((row) => (row.id === announcementId ? { ...row, read } : row)),
+    )
+    const { error } = read
+      ? await supabase.from('announcement_reads_fh').upsert(
+          { announcement_id: announcementId, user_id: user.id },
+          { onConflict: 'announcement_id,user_id', ignoreDuplicates: true },
+        )
+      : await supabase
+          .from('announcement_reads_fh')
+          .delete()
+          .eq('announcement_id', announcementId)
+          .eq('user_id', user.id)
+    // Sem recarregar a tela: o marcador de leitura muda na hora.
+    if (error) setAnnouncements(previous)
   }
 
   return {

@@ -302,19 +302,21 @@ export function FinancePage() {
   }
 
   async function handleStatus(tx: Transaction, status: 'pago' | 'recebido' | 'cancelado') {
-    setBusy(true)
+    const paidAt = status === 'cancelado' ? null : (tx.paid_at ?? new Date().toISOString())
+    // Atualização otimista: o status muda na hora e a tela permanece no lugar.
+    finance.patchTransaction(tx.id, { status, paid_at: paidAt })
+    setServerError(null)
     const result = await finance.update(
       'financial_transactions_fh',
       tx.id,
-      {
-        status,
-        paid_at: status === 'cancelado' ? null : (tx.paid_at ?? new Date().toISOString()),
-      },
+      { status, paid_at: paidAt },
       'financial_transactions_fh',
       { id: tx.id, status: tx.status },
     )
-    setBusy(false)
-    if (result.error) setServerError(t('fin.saveError', { message: result.error }))
+    if (result.error) {
+      finance.patchTransaction(tx.id, { status: tx.status, paid_at: tx.paid_at })
+      setServerError(t('fin.saveError', { message: result.error }))
+    }
   }
 
   async function handleGenerate() {
@@ -370,7 +372,7 @@ export function FinancePage() {
         source: input.source,
         status: 'reviewing',
         row_count: input.rows.length,
-      })
+      }, { reload: false })
       if (created.error || !created.id) {
         setServerError(t('fin.saveError', { message: created.error ?? '' }))
         return
@@ -387,7 +389,7 @@ export function FinancePage() {
           amount: fromMinorUnits(row.amountMinor, row.currency),
           currency: row.currency,
           status: 'accepted',
-        })
+        }, { reload: false })
         if (rowRes.error || !rowRes.id) continue
         const txRes = await finance.insert('financial_transactions_fh', {
           account_id: input.accountId,
@@ -398,7 +400,7 @@ export function FinancePage() {
           description: row.description.slice(0, 200),
           date: row.date,
           import_row_id: rowRes.id,
-        })
+        }, { reload: false })
         if (!txRes.error) accepted += 1
       }
       await finance.update('financial_imports_fh', created.id, {
@@ -682,7 +684,6 @@ export function FinancePage() {
                           <Button
                             size="sm"
                             variant="secondary"
-                            disabled={busy}
                             onClick={() => void handleStatus(tx, tx.kind === 'income' ? 'recebido' : 'pago')}
                           >
                             {tx.kind === 'income' ? t('fin.markReceived') : t('fin.markPaid')}

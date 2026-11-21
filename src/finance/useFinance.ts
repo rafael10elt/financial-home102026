@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
@@ -194,18 +194,24 @@ export function useFinanceData() {
   const [categories, setCategories] = useState<FinanceCategory[]>([])
   const [merchants, setMerchants] = useState<FinanceMerchant[]>([])
   const [reloadToken, setReloadToken] = useState(0)
+  const loadedKeyRef = useRef<string | null>(null)
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), [])
 
   useEffect(() => {
     let cancelled = false
+    const identity = supabase && user && householdId ? `${user.id}:${householdId}` : null
+    // Recargas depois da primeira carga acontecem em segundo plano: mantêm a
+    // tela montada (posição de rolagem, acordeões abertos) enquanto atualizam.
+    const background = identity !== null && loadedKeyRef.current === identity
     queueMicrotask(() => {
       if (cancelled) return
       if (!supabase || !user || !householdId) {
+        loadedKeyRef.current = null
         setStatus('idle')
         return
       }
-      setStatus('loading')
+      if (!background) setStatus('loading')
       setError(null)
       void loadAll(supabase, user.id, householdId)
     })
@@ -258,8 +264,11 @@ export function useFinanceData() {
         const firstError =
           accs.error ?? txs.error ?? recs.error ?? trfs.error ?? gls.error ?? conts.error ?? rts.error ?? ops.error ?? cats.error ?? stores.error
         if (firstError) {
-          setError(firstError.message)
-          setStatus('error')
+          // Numa recarga em segundo plano mantém os dados atuais na tela.
+          if (!background) {
+            setError(firstError.message)
+            setStatus('error')
+          }
           return
         }
         setAccounts((accs.data ?? []) as Account[])
@@ -272,9 +281,10 @@ export function useFinanceData() {
         setOperations((ops.data ?? []) as Operation[])
         setCategories((cats.data ?? []) as FinanceCategory[])
         setMerchants((stores.data ?? []) as FinanceMerchant[])
+        loadedKeyRef.current = identity
         setStatus('ready')
       } catch (unknownError) {
-        if (!cancelled) {
+        if (!cancelled && !background) {
           setError(unknownError instanceof Error ? unknownError.message : String(unknownError))
           setStatus('error')
         }
@@ -307,7 +317,65 @@ export function useFinanceData() {
     })
   }
 
-  async function insert(table: string, payload: Record<string, unknown>) {
+  function patchRows<T extends { id: string }>(
+    rows: T[],
+    id: string,
+    payload: Record<string, unknown>,
+  ): T[] {
+    return rows.map((row) => (row.id === id ? ({ ...row, ...payload } as T) : row))
+  }
+
+  /**
+   * Aplica a alteração já confirmada no estado local. Evita recarregar a tela
+   * inteira para mudanças pontuais (ex.: marcar um lançamento como pago).
+   */
+  function applyLocalUpdate(table: string, id: string, payload: Record<string, unknown>): boolean {
+    switch (table) {
+      case 'financial_transactions_fh':
+        setTransactions((rows) => patchRows(rows, id, payload))
+        return true
+      case 'financial_accounts_fh':
+        setAccounts((rows) => patchRows(rows, id, payload))
+        return true
+      case 'financial_recurrences_fh':
+        setRecurrences((rows) => patchRows(rows, id, payload))
+        return true
+      case 'financial_transfers_fh':
+        setTransfers((rows) => patchRows(rows, id, payload))
+        return true
+      case 'financial_goals_fh':
+        setGoals((rows) => patchRows(rows, id, payload))
+        return true
+      case 'goal_contributions_fh':
+        setContributions((rows) => patchRows(rows, id, payload))
+        return true
+      case 'exchange_rates_fh':
+        setRates((rows) => patchRows(rows, id, payload))
+        return true
+      case 'exchange_operations_fh':
+        setOperations((rows) => patchRows(rows, id, payload))
+        return true
+      case 'categories_fh':
+        setCategories((rows) => patchRows(rows, id, payload))
+        return true
+      case 'financial_merchants_fh':
+        setMerchants((rows) => patchRows(rows, id, payload))
+        return true
+      default:
+        return false
+    }
+  }
+
+  /** Atualização otimista de um lançamento (usada antes da resposta do banco). */
+  const patchTransaction = useCallback((id: string, patch: Partial<Transaction>) => {
+    setTransactions((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+  }, [])
+
+  async function insert(
+    table: string,
+    payload: Record<string, unknown>,
+    options?: { reload?: boolean },
+  ) {
     if (!supabase || !user || !householdId) return { error: 'Supabase não configurado.', id: null as string | null }
     const { data, error: insertError } = await supabase
       .from(table)
@@ -315,7 +383,8 @@ export function useFinanceData() {
       .select('id')
       .single()
     if (insertError) return { error: mapError(insertError.message), id: null }
-    reload()
+    // Em importações em lote, quem chama pode adiar a recarga para o final.
+    if (options?.reload !== false) reload()
     return { error: null, id: (data as { id: string }).id }
   }
 
@@ -327,7 +396,9 @@ export function useFinanceData() {
     if (auditEntity) {
       await audit(supabase, householdId, user.id, auditEntity, id, 'update', before ?? null, payload)
     }
-    reload()
+    // Atualiza apenas o registro afetado; recarrega tudo somente quando a
+    // tabela não tem estado local mapeado.
+    if (!applyLocalUpdate(table, id, payload)) reload()
     return { error: null }
   }
 
@@ -545,6 +616,7 @@ export function useFinanceData() {
     insert,
     update,
     remove,
+    patchTransaction,
     saveRecurrence,
     setRecurrenceActive,
     deleteRecurrence,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { useAuth } from '../auth/context'
 import { useHousehold } from '../household/context'
@@ -141,19 +141,24 @@ export function useAgendaData() {
   const [rules, setRules] = useState<RecurrenceRuleRow[]>([])
   const [exceptions, setExceptions] = useState<(RecurrenceException & { rule_id: string })[]>([])
   const [reloadToken, setReloadToken] = useState(0)
+  const loadedKeyRef = useRef<string | null>(null)
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), [])
 
   useEffect(() => {
     let cancelled = false
+    const identity = supabase && user && householdId ? `${user.id}:${householdId}` : null
+    // Recargas posteriores não desmontam a tela; só atualizam os dados.
+    const background = identity !== null && loadedKeyRef.current === identity
     // Todo setState é deferido para fora do corpo síncrono do efeito.
     queueMicrotask(() => {
       if (cancelled) return
       if (!supabase || !user || !householdId) {
+        loadedKeyRef.current = null
         setStatus('idle')
         return
       }
-      setStatus('loading')
+      if (!background) setStatus('loading')
       setError(null)
       void loadAll(supabase, user.id, householdId)
     })
@@ -220,8 +225,11 @@ export function useAgendaData() {
           rls.error ??
           excs.error
         if (firstError) {
-          setError(firstError.message)
-          setStatus('error')
+          // Em recarga de fundo, preserva o que já está na tela.
+          if (!background) {
+            setError(firstError.message)
+            setStatus('error')
+          }
           return
         }
         setCategories((cats.data ?? []) as Category[])
@@ -240,9 +248,10 @@ export function useAgendaData() {
             }),
           ),
         )
+        loadedKeyRef.current = identity
         setStatus('ready')
       } catch (unknownError) {
-        if (!cancelled) {
+        if (!cancelled && !background) {
           setError(unknownError instanceof Error ? unknownError.message : String(unknownError))
           setStatus('error')
         }
@@ -343,20 +352,27 @@ export function useAgendaData() {
   async function markNotificationsRead(ids: string[] | 'all'): Promise<void> {
     if (!supabase || !user) return
     const now = new Date().toISOString()
-    if (ids === 'all') {
-      await supabase
-        .from('notifications_fh')
-        .update({ read_at: now })
-        .eq('user_id', user.id)
-        .is('read_at', null)
-    } else if (ids.length > 0) {
-      await supabase
-        .from('notifications_fh')
-        .update({ read_at: now })
-        .eq('user_id', user.id)
-        .in('id', ids)
-    }
-    reload()
+    const previous = notifications
+    setNotifications((rows) =>
+      rows.map((row) =>
+        (ids === 'all' || ids.includes(row.id)) && !row.read_at ? { ...row, read_at: now } : row,
+      ),
+    )
+    const { error } = ids === 'all'
+      ? await supabase
+          .from('notifications_fh')
+          .update({ read_at: now })
+          .eq('user_id', user.id)
+          .is('read_at', null)
+      : ids.length > 0
+        ? await supabase
+            .from('notifications_fh')
+            .update({ read_at: now })
+            .eq('user_id', user.id)
+            .in('id', ids)
+        : { error: null }
+    // Sem recarregar a página: o estado local já reflete a leitura.
+    if (error) setNotifications(previous)
   }
 
   async function generateDueNotifications(leadHours: number): Promise<{ error: string | null }> {
@@ -422,17 +438,28 @@ export function useAgendaData() {
     status: 'open' | 'in_progress' | 'done' | 'cancelled',
   ): Promise<{ error: string | null }> {
     if (!supabase) return { error: 'Supabase não configurado.' }
+    const previous = tasks
+    const completedAt = status === 'done' ? new Date().toISOString() : null
+    // Otimista: o cartão muda de coluna imediatamente, sem recarregar a tela.
+    setTasks((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, status, completed_at: completedAt } : row)),
+    )
     const { error } = await supabase.rpc('set_task_status_fh', { p_task_id: id, p_status: status })
-    if (!error) reload()
+    if (error) setTasks(previous)
     return { error: error?.message ?? null }
   }
 
   async function dismissReminder(id: string): Promise<{ error: string | null }> {
     if (!supabase) return { error: 'Supabase não configurado.' }
+    const previous = reminders
+    const dismissedAt = new Date().toISOString()
+    setReminders((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, dismissed_at: dismissedAt } : row)),
+    )
     const result = await zodUpdate(supabase, 'reminders_fh', id, {
-      dismissed_at: new Date().toISOString(),
+      dismissed_at: dismissedAt,
     })
-    if (!result.error) reload()
+    if (result.error) setReminders(previous)
     return result
   }
 

@@ -20,10 +20,12 @@ import { ExchangeRateWidget } from '../finance/FinanceDashboardCharts'
 import { DashboardWidgetsDialog } from '../finance/DashboardWidgetsDialog'
 import { TradingSessionsWidget } from '../../ui/TradingSessionsWidget'
 import { GroceryListWidget } from '../../ui/GroceryListWidget'
+import { EnergyWidget } from '../../ui/EnergyWidget'
 
 const DEFAULT_WIDGETS = [
   'clocks',
   'weather',
+  'energy',
   'quickActions',
   'agendaToday',
   'tasksOpen',
@@ -163,6 +165,8 @@ export function OverviewPage() {
         return <ClocksWidget />
       case 'weather':
         return <WeatherWidget />
+      case 'energy':
+        return <EnergyWidget />
       case 'tradingSessions':
         return <TradingSessionsWidget />
       case 'grocery':
@@ -285,6 +289,7 @@ export function OverviewPage() {
         <DashboardWidgetsDialog
           labels={{
             clocks: t('overview.widget.clocks'), weather: t('weather.title'), quickActions: t('overview.quickActions'),
+            energy: t('overview.energy.title'),
             agendaToday: t('overview.agendaToday'), tasksOpen: t('overview.tasksOpen'), mood: t('diary.moodToday'),
             financeSoon: t('overview.financeSoon'), diarySoon: t('overview.diarySoon'), exchange: t('fin.dashboard.exchange'),
             tradingSessions: t('overview.trading.title'), grocery: t('overview.grocery.title'),
