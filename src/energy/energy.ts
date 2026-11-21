@@ -20,6 +20,8 @@ export type EnergyConfig = {
   initialReading: number
   currentReading: number
   cycleStart: string
+  /** Duração do ciclo de fatura em meses (1 = mensal, 2 = bimestral...). */
+  cycleMonths: number
   readings: EnergyReading[]
 }
 
@@ -34,6 +36,9 @@ export type EnergyEstimate = {
   projectedKwh: number
   /** Conta projetada para o ciclo completo (centavos). */
   projectedCostMinor: number
+  /** Início e fim (estimado) do ciclo. */
+  cycleStart: string
+  cycleEnd: string
   cycleDays: number
   daysElapsed: number
   daysLeft: number
@@ -84,9 +89,9 @@ export function addMonthsKey(key: string, months: number): string {
   return `${target.getUTCFullYear()}-${pad(target.getUTCMonth() + 1)}-${pad(Math.min(day, lastDay))}`
 }
 
-/** Último dia do ciclo que começa em `cycleStart`. */
-export function cycleEndKey(cycleStart: string): string {
-  return utcToDateKey(dateKeyToUtc(addMonthsKey(cycleStart, 1)) - DAY_MS)
+/** Último dia do ciclo que começa em `cycleStart` (1 mês por padrão). */
+export function cycleEndKey(cycleStart: string, months = 1): string {
+  return utcToDateKey(dateKeyToUtc(addMonthsKey(cycleStart, Math.max(1, Math.round(months)))) - DAY_MS)
 }
 
 /** Diferença em dias entre duas datas (b - a). */
@@ -113,7 +118,8 @@ export function energyCostMinor(kwh: number, pricePerKwh: number, fixedFee: numb
  */
 export function computeEnergyEstimate(config: EnergyConfig, todayKey = toDateKey()): EnergyEstimate {
   const consumptionKwh = Math.max(0, config.currentReading - config.initialReading)
-  const end = cycleEndKey(config.cycleStart)
+  const cycleMonths = Math.max(1, Math.round(config.cycleMonths || 1))
+  const end = cycleEndKey(config.cycleStart, cycleMonths)
   const cycleDays = Math.max(1, daysBetween(config.cycleStart, end) + 1)
   const rawElapsed = daysBetween(config.cycleStart, todayKey) + 1
   const daysElapsed = Math.min(cycleDays, Math.max(0, rawElapsed))
@@ -126,6 +132,8 @@ export function computeEnergyEstimate(config: EnergyConfig, todayKey = toDateKey
     dailyAverageKwh,
     projectedKwh,
     projectedCostMinor: energyCostMinor(projectedKwh, config.pricePerKwh, config.fixedFee),
+    cycleStart: config.cycleStart,
+    cycleEnd: end,
     cycleDays,
     daysElapsed,
     daysLeft,

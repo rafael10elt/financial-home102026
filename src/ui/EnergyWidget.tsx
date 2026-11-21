@@ -27,6 +27,7 @@ type EnergyRow = {
   initial_reading: string | number
   current_reading: string | number
   cycle_start: string
+  cycle_months: number | string | null
   readings: unknown
 }
 
@@ -37,13 +38,25 @@ type EnergyForm = {
   initialReading: number
   currentReading: number
   cycleStart: string
+  cycleMonths: number
 }
 
 const CURRENCIES = ['EUR', 'BRL', 'USD', 'GBP'] as const
+const CYCLE_OPTIONS = [
+  { months: 1, key: 'overview.energy.cycle.monthly' },
+  { months: 2, key: 'overview.energy.cycle.bimonthly' },
+  { months: 3, key: 'overview.energy.cycle.quarterly' },
+  { months: 6, key: 'overview.energy.cycle.semiannual' },
+] as const
 const selectClass = 'h-10 w-full rounded-md border border-input bg-card px-3 text-sm text-foreground'
 
 function safeCurrency(value: string | null | undefined): string {
   return value && (CURRENCIES as readonly string[]).includes(value) ? value : 'EUR'
+}
+
+function normalizeCycleMonths(value: unknown): number {
+  const parsed = Math.round(parseDecimal(value as string | number))
+  return CYCLE_OPTIONS.some((option) => option.months === parsed) ? parsed : 2
 }
 
 function rowToConfig(row: EnergyRow | null): EnergyConfig {
@@ -54,6 +67,7 @@ function rowToConfig(row: EnergyRow | null): EnergyConfig {
     initialReading: parseDecimal(row?.initial_reading),
     currentReading: parseDecimal(row?.current_reading),
     cycleStart: row?.cycle_start ?? monthStartKey(),
+    cycleMonths: normalizeCycleMonths(row?.cycle_months),
     readings: normalizeReadings(row?.readings),
   }
 }
@@ -87,6 +101,12 @@ function formatShortDate(key: string, locale: string): string {
   )
 }
 
+function formatFullDate(key: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short', year: 'numeric' }).format(
+    new Date(`${key}T12:00:00`),
+  )
+}
+
 function EnergyDialog({
   initial,
   busy,
@@ -111,6 +131,7 @@ function EnergyDialog({
     initial.currentReading > 0 ? String(initial.currentReading) : '',
   )
   const [cycleStart, setCycleStart] = useState(initial.cycleStart)
+  const [cycleMonths, setCycleMonths] = useState(initial.cycleMonths)
   const [formError, setFormError] = useState<string | null>(null)
 
   function submit(event: FormEvent) {
@@ -142,6 +163,7 @@ function EnergyDialog({
       initialReading: initialValue,
       currentReading: currentValue,
       cycleStart,
+      cycleMonths,
     })
   }
 
@@ -189,6 +211,20 @@ function EnergyDialog({
                 value={cycleStart}
                 onChange={(event) => setCycleStart(event.target.value)}
               />
+            )}
+          </Field>
+          <Field label={t('overview.energy.cycleLength')}>
+            {(aria) => (
+              <select
+                {...aria}
+                value={cycleMonths}
+                onChange={(event) => setCycleMonths(Number(event.target.value))}
+                className={selectClass}
+              >
+                {CYCLE_OPTIONS.map((option) => (
+                  <option key={option.months} value={option.months}>{t(option.key)}</option>
+                ))}
+              </select>
             )}
           </Field>
           <Field label={t('overview.energy.initialReading')}>
@@ -293,6 +329,7 @@ export function EnergyWidget() {
       initial_reading: values.initialReading,
       current_reading: values.currentReading,
       cycle_start: values.cycleStart,
+      cycle_months: values.cycleMonths,
       readings,
       updated_at: new Date().toISOString(),
     }
@@ -389,6 +426,12 @@ export function EnergyWidget() {
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
                 <div className="h-full rounded-full bg-primary" style={{ width: `${estimate.percent}%` }} />
               </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {t('overview.energy.cycleRange', {
+                  start: formatFullDate(estimate.cycleStart, locale),
+                  end: formatFullDate(estimate.cycleEnd, locale),
+                })}
+              </p>
             </div>
 
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">

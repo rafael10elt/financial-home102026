@@ -1543,3 +1543,12 @@ para que a seleção de perfil recupere sempre o mesmo `auth.uid()`.
 - Visão geral: novo widget “Energia Elétrica” com valor por kWh, taxa fixa opcional, início do ciclo, leitura inicial e leitura atual. Mostra consumo do ciclo, conta estimada, projeção do mês, média diária, progresso do ciclo e histórico das últimas leituras (o histórico cresce a cada leitura salva em outro dia).
 - Banco: FH-SQL-015 cria `energy_settings_fh` (uma linha por casa, com RLS por casa). Em banco existente, executar uma vez o bloco FH-SQL-015 ao final de `banco.sql`. Migração equivalente em `supabase/migrations/20261121120000_fh_energy.sql`.
 - Verificação: `npm run typecheck` e `npm run build` passaram; lint dos arquivos alterados sem erros; testes novos de energia e i18n passaram. `App.test.tsx` continua falhando por motivo pré-existente e ambiental (o `.env` local configura o Supabase, então a tela de seleção de perfil aparece em vez do aviso de configuração pendente).
+
+# 2026-11-21 — Ciclo bimestral no medidor de energia
+
+- O widget “Energia Elétrica” deixou de assumir ciclo mensal. A duração da fatura agora é configurável (mensal, bimestral, trimestral ou semestral) e o padrão passou a ser bimestral, refletindo a cobrança em Dublin.
+- O ciclo mostra explicitamente o intervalo: data de início informada e fim estimado calculado pela periodicidade. O progresso, os dias restantes e a projeção usam esse intervalo, então a projeção agora é “do ciclo” e não “do mês”.
+- O valor fixo passou a ser descrito como “por fatura” em vez de mensal, já que a taxa é lançada uma vez por ciclo.
+- Contexto do medidor: o CESCO Emlite ECA2.v é um submedidor interno; a leitura usada é o total acumulado em kWh exibido nele, e a estimativa cobre apenas os circuitos alimentados por esse medidor. Nenhuma integração automática com o aparelho é necessária.
+- Banco: FH-SQL-016 adiciona `cycle_months` (inteiro, padrão 2, entre 1 e 12) em `energy_settings_fh`. Em banco existente, executar uma vez o bloco FH-SQL-016 ao final de `banco.sql`. Migração equivalente em `supabase/migrations/20261121130000_fh_energy_cycle.sql`. Até o SQL ser aplicado, salvar a medição retorna erro na coluna nova.
+- Verificação: `npm run typecheck` passou; testes de `src/energy` e `src/i18n` passaram (13 testes); lint dos arquivos alterados sem erros.

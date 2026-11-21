@@ -3088,3 +3088,29 @@ select column_name, data_type
  where table_schema = 'public' and table_name = 'energy_settings_fh'
  order by ordinal_position;
 
+-- =====================================================================
+-- FH-SQL-016: periodicidade da fatura de energia
+-- Data: 2026-11-21
+-- Duracao do ciclo de fatura em meses (1 = mensal, 2 = bimestral).
+-- Nao modifica dados. Aplicar uma vez no SQL Editor do projeto Supabase.
+-- =====================================================================
+begin;
+
+alter table public.energy_settings_fh
+  add column if not exists cycle_months integer not null default 2;
+
+alter table public.energy_settings_fh
+  drop constraint if exists energy_settings_fh_cycle_months_check;
+
+alter table public.energy_settings_fh
+  add constraint energy_settings_fh_cycle_months_check
+  check (cycle_months between 1 and 12);
+
+commit;
+
+-- Validacao FH-SQL-016
+select column_name, data_type, column_default, is_nullable
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'energy_settings_fh'
+   and column_name = 'cycle_months';
+

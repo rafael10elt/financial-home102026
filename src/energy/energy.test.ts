@@ -18,6 +18,7 @@ const base: EnergyConfig = {
   initialReading: 1000,
   currentReading: 1100,
   cycleStart: '2026-11-01',
+  cycleMonths: 1,
   readings: [],
 }
 
@@ -38,10 +39,25 @@ describe('energy', () => {
 
   it('encontra o fim do ciclo respeitando meses curtos', () => {
     expect(cycleEndKey('2026-11-05')).toBe('2026-12-04')
+    expect(cycleEndKey('2026-11-05', 2)).toBe('2027-01-04')
     expect(cycleEndKey('2026-01-31')).toBe('2026-02-27')
     expect(cycleEndKey('2026-12-15')).toBe('2027-01-14')
     expect(addMonthsKey('2026-01-31', 1)).toBe('2026-02-28')
     expect(addMonthsKey('2028-01-31', 1)).toBe('2028-02-29')
+  })
+
+  it('projeta um ciclo bimestral', () => {
+    const estimate = computeEnergyEstimate(
+      { ...base, cycleStart: '2026-11-05', cycleMonths: 2 },
+      '2026-12-04',
+    )
+    expect(estimate.cycleStart).toBe('2026-11-05')
+    expect(estimate.cycleEnd).toBe('2027-01-04')
+    expect(estimate.cycleDays).toBe(61)
+    expect(estimate.daysElapsed).toBe(30)
+    expect(estimate.daysLeft).toBe(31)
+    expect(estimate.percent).toBe(49)
+    expect(estimate.projectedKwh).toBeCloseTo(203.33, 1)
   })
 
   it('projeta o mês a partir da média diária', () => {
